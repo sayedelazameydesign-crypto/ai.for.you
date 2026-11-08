@@ -20,6 +20,7 @@
     "check:build": "node scripts/check-build.mjs",
     "check:docs": "node scripts/check-docs.mjs",
     "check:sql": "node scripts/check-sql.mjs",
+    "check:evidence": "node scripts/check-evidence.mjs",
     "economics": "node scripts/unit-economics.mjs",
     "report:maintenance": "node scripts/maintenance-report.mjs",
     "agent:guards": "node scripts/agent-guards.mjs",

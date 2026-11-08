@@ -35,6 +35,9 @@ jobs:
       # The quota schema is not executed here; its security properties are.
       - name: Assert quota schema security properties
         run: npm run check:sql
+      # Every number this repository publishes must match a measurement.
+      - name: Assert published numbers match measurements
+        run: npm run check:evidence -- --full
       - name: Reject committed secrets and client-side key prefixes
         run: node scripts/guard-secrets.mjs
       # The maintenance agent's safety claims are asserted, not documented.
