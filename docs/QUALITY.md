@@ -28,6 +28,7 @@ Coverage includes:
 - Both tool registries stay in sync with the shared id list.
 - Versioned `/api/v1` routing, explicit origin allowlist, preflight handling, one bounded provider retry, and token-budget clamping.
 - A post-deploy smoke test that requests the published page and the status endpoint.
+- A motion suite run with animation enabled, covering scroll reveal, pointer tilt, reduced-motion fallbacks, brand presence, and mobile hero overlap.
 - A build-output assertion: complete `dist`, no unreplaced identity placeholders, within the Pages size limit, and no provider key in any published asset.
 
 Automated accessibility checks do not replace manual assistive-technology testing. Syntax checking does not replace TypeScript type checking, unit tests in user code, or security review.

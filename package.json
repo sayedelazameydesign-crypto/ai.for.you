@@ -16,7 +16,8 @@
     "check": "npm run lint && npm run test && npm run build",
     "test:browser": "playwright test",
     "test:smoke": "node scripts/smoke-deploy.mjs",
-    "check:build": "node scripts/check-build.mjs"
+    "check:build": "node scripts/check-build.mjs",
+    "render:og": "node scripts/render-og-image.mjs"
   },
   "dependencies": {
     "@babel/parser": "8.1.0",

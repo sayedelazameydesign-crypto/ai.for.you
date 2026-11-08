@@ -21,7 +21,7 @@ export interface SiteConfig {
 export const SITE_DEFAULTS = {
   brandAr: 'لك',
   brandLatin: 'celia.sh',
-  description: 'لك — مساحة عربية لأدوات ذكية. اكتب محتوى تسويقياً، لخّص النصوص، وافحص أكوادك. أدوات محلية مجانية، دون حساب أو بطاقة ائتمان.',
+  description: 'celia.sh — مساحة عربية لأدوات ذكية. اكتب محتوى تسويقياً، لخّص النصوص، وافحص أكوادك. أدوات محلية مجانية، دون حساب أو بطاقة ائتمان.',
   repoUrl: 'https://github.com/sayedelazameydesign-crypto/celia.sh',
   siteUrl: 'https://sayedelazameydesign-crypto.github.io/celia.sh/',
   themeColor: '#7660d3',
@@ -54,7 +54,7 @@ export function resolveSiteConfig(env: Env): SiteConfig {
   const siteUrl = withTrailingSlash(httpUrl(env.VITE_SITE_URL)) || SITE_DEFAULTS.siteUrl
   const apiBase = withoutTrailingSlash(httpUrl(env.VITE_API_BASE))
   const themeColor = /^#[0-9a-f]{6}$/i.test(clean(env.VITE_THEME_COLOR)) ? clean(env.VITE_THEME_COLOR) : SITE_DEFAULTS.themeColor
-  const title = clean(env.VITE_SITE_TITLE) || `${brandAr} — أدوات ذكية، لاحتمالات أكبر | ${brandLatin}`
+  const title = clean(env.VITE_SITE_TITLE) || `${brandLatin} — أدوات ذكية، لاحتمالات أكبر`
   return { brandAr, brandLatin, title, description, repoUrl, siteUrl, apiBase, themeColor }
 }
 
