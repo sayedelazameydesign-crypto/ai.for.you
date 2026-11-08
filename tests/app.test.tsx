@@ -1,0 +1,87 @@
+import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import App from '../src/App'
+import { readSaved } from '../src/lib/storage'
+
+beforeEach(() => {
+  window.location.hash = '/'
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ configured: false })))
+})
+
+describe('Arabic workspace integration', () => {
+  it('renders an RTL dashboard with three working tool links', async () => {
+    render(<App />)
+    expect(document.documentElement.lang).toBe('ar')
+    expect(document.documentElement.dir).toBe('rtl')
+    expect(screen.getByRole('heading', { level: 1, name: /أدوات صغيرة/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'جرّب مولّد المحتوى' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'جرّب التلخيص' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'جرّب فحص الكود' })).toBeTruthy()
+    expect(await screen.findByText(/غير مهيّأ|وضع محلي/)).toBeTruthy()
+  })
+  it('generates, saves, searches and deletes a marketing result', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    await user.click(screen.getByRole('button', { name: /مشروع صغير، حضور كبير/ }))
+    expect(screen.getByLabelText('ما اسم المنتج أو المشروع؟', { exact: false })).toHaveProperty('value', 'نبتة')
+    await user.click(screen.getByRole('button', { name: 'اكتب لي 3 أفكار' }))
+    expect(screen.getAllByRole('button', { name: 'حفظ في المكتبة' })).toHaveLength(3)
+    await user.click(screen.getAllByRole('button', { name: 'حفظ في المكتبة' })[0])
+    expect(readSaved()).toHaveLength(1)
+    await user.click(screen.getByRole('button', { name: /النتائج المحفوظة/ }))
+    expect(screen.getByRole('heading', { name: /نبتة/ })).toBeTruthy()
+    await user.type(screen.getByLabelText('البحث في المكتبة'), 'nothing-matches-this')
+    expect(screen.getByText('لم نجد نتيجة مطابقة')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'إزالة عوامل التصفية' }))
+    await user.click(screen.getByRole('button', { name: /حذف نبتة/ }))
+    const dialog = screen.getByRole('dialog')
+    await user.click(within(dialog).getByRole('button', { name: 'حذف النتيجة' }))
+    expect(readSaved()).toHaveLength(0)
+    expect(screen.getByText('مساحة لأفكارك القادمة')).toBeTruthy()
+  })
+  it('summarizes a pasted article locally', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    await user.click(screen.getByRole('button', { name: /خذ فكرة من مقال طويل/ }))
+    await user.click(screen.getByRole('button', { name: 'أعطني الخلاصة' }))
+    expect(screen.getByRole('heading', { name: 'خلاصة النص' })).toBeTruthy()
+    expect(screen.getByText('تلخيص استخلاصي')).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'النقاط الأساسية' })).toBeTruthy()
+  })
+  it('checks code and provides safe formatting', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    await user.click(screen.getByRole('button', { name: /امنح كودك مراجعة ثانية/ }))
+    await user.click(screen.getByRole('button', { name: 'افحص الكود', exact: true }))
+    expect(await screen.findByText('prefer-block-scope')).toBeTruthy()
+    expect(screen.getByText('strict-equality')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'JSON', exact: true }))
+    await user.click(screen.getByRole('button', { name: 'جرّب مثالاً' }))
+    await user.click(screen.getByRole('button', { name: 'افحص الكود', exact: true }))
+    expect(await screen.findByRole('button', { name: 'تطبيق التنسيق الآمن' })).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'تطبيق التنسيق الآمن' }))
+    expect((screen.getByLabelText('محرر الكود') as HTMLTextAreaElement).value).toContain('\n  "project"')
+  })
+  it('navigates using hashes and exposes command search', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    await user.keyboard('{Control>}k{/Control}')
+    const dialog = screen.getByRole('dialog')
+    await user.type(within(dialog).getByLabelText('البحث في الأدوات'), 'الإعدادات')
+    await user.keyboard('{Enter}')
+    expect(window.location.hash).toBe('#/settings')
+    expect(screen.getByRole('heading', { name: 'وضوح كامل. تحكم كامل.' })).toBeTruthy()
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+  it('never silently submits to AI without configuration and consent', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    await user.click(screen.getByRole('button', { name: /مشروع صغير، حضور كبير/ }))
+    await user.click(screen.getByRole('button', { name: /ذكاء اصطناعي/ }))
+    await user.click(screen.getByRole('button', { name: 'اكتب لي 3 أفكار' }))
+    expect(screen.getByRole('alert').textContent).toContain('غير مهيّأ')
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(fetch).toHaveBeenCalledWith(expect.any(URL), expect.objectContaining({ signal: expect.any(AbortSignal) }))
+  })
+})
