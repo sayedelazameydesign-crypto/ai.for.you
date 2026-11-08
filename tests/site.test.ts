@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { httpUrl, joinApiBase, resolveSiteConfig, SITE_DEFAULTS } from '../shared/site'
-import { normalizeBase, normalizeDomain } from '../build/site-plugin'
+import { normalizeBase, normalizeDomain } from '../config/site-plugin'
 import { apiPath, API_VERSION } from '../shared/contract'
 import { TOOL_IDS } from '../shared/tools'
 import { tools, toolById } from '../src/tools/index'

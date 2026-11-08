@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { developmentApi } from './server/development.ts'
 import { resolveSiteConfig } from './shared/site.ts'
-import { normalizeBase, normalizeDomain, sitePlugin } from './build/site-plugin.ts'
+import { normalizeBase, normalizeDomain, sitePlugin } from './config/site-plugin.ts'
 
 export default defineConfig(({ mode }) => {
   // Unprefixed secrets stay in this server closure; never pass them to define.

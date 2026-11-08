@@ -130,7 +130,7 @@ server/
   providers/      Provider adapters (Groq today), swappable server-side
   ai.ts           Generic proxy: limits, validation, error mapping
 api/v1/           Versioned Vercel Node function adapters
-build/            Build-time identity injection and CNAME emission
+config/           Build-time identity injection and CNAME emission
 scripts/          Post-deploy smoke test, repository secret guard
 tests/            Engines, UI workflows, server security, hosting identity
 .github/workflows CI, deploy, post-deploy verification, live Groq smoke
