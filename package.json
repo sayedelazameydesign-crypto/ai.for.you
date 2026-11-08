@@ -15,7 +15,8 @@
     "test:watch": "vitest",
     "check": "npm run lint && npm run test && npm run build",
     "test:browser": "playwright test",
-    "test:smoke": "node scripts/smoke-deploy.mjs"
+    "test:smoke": "node scripts/smoke-deploy.mjs",
+    "check:build": "node scripts/check-build.mjs"
   },
   "dependencies": {
     "@babel/parser": "8.1.0",

@@ -1,0 +1,33 @@
+version: 2
+updates:
+  # Actions are pinned to full commit SHAs; Dependabot keeps those pins current
+  # and rewrites the version comment, so pinning does not mean falling behind.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        patterns: ['*']
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: deps
+    groups:
+      # Patch and minor updates land together to keep CI runs (and review load) low.
+      routine:
+        update-types: ['patch', 'minor']
+    # Majors are reviewed individually: React, Vite and ESLint majors have
+    # breaking changes that the test suite must confirm before merging.
+    ignore:
+      - dependency-name: '*'
+        update-types: ['version-update:semver-major']
