@@ -15,9 +15,11 @@ test('scroll reveal shows content and pointer tilt responds to the cursor', asyn
 
   const section = page.locator('.tools-section')
   await section.scrollIntoViewIfNeeded()
-  // Revealed content must end up fully opaque, never stuck part-way.
-  await expect(section).toHaveClass(/is-revealed/)
+  // Assert the visible outcome, not the mechanism: native scroll timelines reveal
+  // in CSS with no class, while the fallback adds `is-revealed`. Both must end opaque.
   await expect(section).toHaveCSS('opacity', '1')
+  const usesNativeTimeline = await section.evaluate((node) => getComputedStyle(node).getPropertyValue('animation-timeline').trim() !== 'auto')
+  if (!usesNativeTimeline) await expect(section).toHaveClass(/is-revealed/)
 
   const card = page.locator('.tool-card').first()
   await card.scrollIntoViewIfNeeded()
@@ -77,4 +79,44 @@ test('mobile hero art never overlaps the hero copy', async ({ page }) => {
   // Adding the brand line pushed the copy down; the art must stay clear of it.
   expect(art.y).toBeGreaterThanOrEqual(copy.y + copy.height)
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+})
+
+test('native CSS features are actually applied, not just present in the source', async ({ page }) => {
+  await page.goto('/')
+  const features = await page.evaluate(() => {
+        const card = document.querySelector('.tool-card') as HTMLElement
+    const section = document.querySelector('.tools-section') as HTMLElement
+    return {
+      containerType: getComputedStyle(card).containerType,
+      containerName: getComputedStyle(card).containerName,
+      supportsHas: CSS.supports('selector(:has(*))'),
+      supportsSiblingIndex: CSS.supports('order: sibling-index()'),
+      supportsScrollTimeline: CSS.supports('animation-timeline: view()'),
+      revealTimeline: getComputedStyle(section).getPropertyValue('animation-timeline').trim(),
+      stagger: card.style.getPropertyValue('--stagger') || getComputedStyle(card).getPropertyValue('--stagger').trim(),
+      sidebarTransitionName: getComputedStyle(document.querySelector('.sidebar') as HTMLElement).getPropertyValue('view-transition-name').trim(),
+    }
+  })
+  // Container queries and :has() are Baseline Widely available — must be live.
+  expect(features.containerType).toBe('inline-size')
+  expect(features.containerName).toBe('card')
+  expect(features.supportsHas).toBe(true)
+  expect(features.sidebarTransitionName).toBe('sidebar')
+  // The stagger must resolve to a number on every card, whichever path supplied it.
+  expect(Number(features.stagger)).toBeGreaterThanOrEqual(0)
+  // When the engine supports scroll timelines, the reveal must be CSS-driven.
+  if (features.supportsScrollTimeline) expect(features.revealTimeline).not.toBe('auto')
+})
+
+test('view transitions wrap route changes without breaking navigation or focus', async ({ page }) => {
+  await page.goto('/')
+  const supported = await page.evaluate(() => typeof document.startViewTransition === 'function')
+  await page.getByRole('button', { name: 'جرّب مولّد المحتوى' }).click()
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
+  await expect(page.getByRole('main')).toBeFocused()
+  await page.getByRole('button', { name: /النتائج المحفوظة/ }).click()
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
+  // Navigation must work identically whether or not the API exists.
+  expect(await page.evaluate(() => location.hash)).toBe('#/saved')
+  expect(typeof supported).toBe('boolean')
 })

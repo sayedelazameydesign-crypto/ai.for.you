@@ -5,6 +5,7 @@
  * Limits: published site <= 1 GB. See docs/FREE-TIERS.md.
  */
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { gzipSync } from 'node:zlib'
 import { join } from 'node:path'
 
 const DIST = 'dist'
@@ -42,4 +43,24 @@ if (existsSync(ASSETS)) {
   }
 }
 
+// Ship-less-JS budget, measured on the compressed bytes a visitor actually
+// downloads. The Pages limit above is 1 GB and would never catch a bloated bundle.
+// Budgets are deliberately a little above current output so normal growth passes
+// but a heavy new dependency fails the build and has to be justified.
+const BUDGETS = { js: 200 * 1024, css: 40 * 1024 }
+const compressed = { js: 0, css: 0 }
+if (existsSync(ASSETS)) {
+  for (const name of readdirSync(ASSETS)) {
+    const kind = name.endsWith('.js') ? 'js' : name.endsWith('.css') ? 'css' : null
+    if (!kind) continue
+    compressed[kind] += gzipSync(readFileSync(join(ASSETS, name))).length
+  }
+}
+for (const [kind, limit] of Object.entries(BUDGETS)) {
+  if (compressed[kind] > limit) {
+    fail(`budget_exceeded_${kind} gzip_kb=${(compressed[kind] / 1024).toFixed(1)} limit_kb=${(limit / 1024).toFixed(0)}`)
+  }
+}
+
 console.log(`build_check=passed files=${files} size_mb=${(bytes / 1048576).toFixed(2)} pages_limit_mb=1024`)
+console.log(`bundle_gzip js_kb=${(compressed.js / 1024).toFixed(1)}/${BUDGETS.js / 1024} css_kb=${(compressed.css / 1024).toFixed(1)}/${BUDGETS.css / 1024}`)

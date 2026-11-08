@@ -136,15 +136,48 @@
 .tool-card:hover .tool-card-action svg { transform: translateX(-4px); }
 .tool-card-action svg { transition: transform .25s ease; }
 
-/* Armed only by JS, so a script failure never leaves content invisible. */
-[data-reveal].reveal-armed { opacity: 0; transform: translateY(14px); }
+/* Reveal uses `translate`, tilt uses `transform`. They are independent
+   properties, so a card can reveal and tilt without either cancelling the
+   other. Armed only by JS, so a script failure never leaves content invisible. */
+[data-reveal].reveal-armed { opacity: 0; translate: 0 14px; }
 [data-reveal].is-revealed {
   opacity: 1;
-  transform: none;
-  transition: opacity .5s ease, transform .5s cubic-bezier(.2, .8, .3, 1);
+  translate: none;
+  transition: opacity .5s ease, translate .5s cubic-bezier(.2, .8, .3, 1);
 }
-.tool-cards > [data-reveal]:nth-child(2) { transition-delay: .07s; }
-.tool-cards > [data-reveal]:nth-child(3) { transition-delay: .14s; }
+/* Registry-driven stagger: works for any number of tools, not a hardcoded 3.
+   sibling-index() is Baseline since Firefox 154 (Aug 2026); the nth-child rules
+   above it are the fallback for older engines. */
+.tool-cards > [data-reveal]:nth-child(1) { --stagger: 0; }
+.tool-cards > [data-reveal]:nth-child(2) { --stagger: 1; }
+.tool-cards > [data-reveal]:nth-child(3) { --stagger: 2; }
+.tool-cards > [data-reveal]:nth-child(4) { --stagger: 3; }
+.tool-cards > [data-reveal]:nth-child(5) { --stagger: 4; }
+.tool-cards > [data-reveal]:nth-child(6) { --stagger: 5; }
+@supports (order: sibling-index()) {
+  .tool-cards > [data-reveal] { --stagger: calc(sibling-index() - 1); }
+}
+.tool-cards > [data-reveal].is-revealed { transition-delay: calc(var(--stagger, 0) * .07s); }
+
+/*
+ * Native scroll-driven reveal. Baseline Newly available since Firefox 159
+ * (27 Oct 2026). Where supported this runs on the compositor and useReveal()
+ * returns early, so there is no observer and no main-thread scroll work.
+ * animation-timeline MUST follow the animation shorthand: the shorthand resets it.
+ */
+@media (prefers-reduced-motion: no-preference) {
+  @supports (animation-timeline: view()) {
+    [data-reveal] {
+      animation: reveal-on-scroll linear both;
+      animation-timeline: view();
+      animation-range: entry 0% entry 42%;
+    }
+    @keyframes reveal-on-scroll {
+      from { opacity: 0; translate: 0 14px; }
+      to { opacity: 1; translate: none; }
+    }
+  }
+}
 
 /* ── Press feedback + live status ─────────────────────────────────────────── */
 
@@ -208,7 +241,7 @@
 @media (prefers-reduced-motion: reduce) {
   .brand-mark-sheen, .hero::before, .status-dot, .hero-badge { animation: none !important; }
   .tool-card { transform: none !important; }
-  [data-reveal].reveal-armed { opacity: 1; transform: none; }
+  [data-reveal].reveal-armed { opacity: 1; translate: none; }
   .sidebar-brand > button:hover .brand-mark { transform: none; }
 }
 
@@ -232,3 +265,52 @@
 :root[data-theme='dark'] .library-total { color: #c1a9f4; }
 .tiny-label { color: #756582; }
 :root[data-theme='dark'] .tiny-label { color: #bca4d3; }
+
+/* ── Container queries ────────────────────────────────────────────────────────
+ * Baseline Widely available since Aug 2025. Each card is its own container, so
+ * thresholds describe the card's real width. Putting the container on the grid
+ * instead would compare against the whole row and never match a per-card size.
+ */
+.tool-card { container-type: inline-size; container-name: card; }
+
+/* Three columns on a narrow desktop leave each card ~240px. */
+@container card (max-width: 280px) {
+  .tool-card h3 { font-size: 14px; margin-top: 13px; }
+  .tool-card > p { font-size: 10px; line-height: 1.85; }
+  .tool-category { display: none; }
+  .tool-preview { height: 78px; }
+}
+@container card (max-width: 235px) {
+  .tool-card h3 { font-size: 13px; }
+  .tool-card > p { font-size: 9.5px; }
+  .tool-preview { height: 72px; }
+}
+/* A single-column mobile card is wide again, so it keeps the readable defaults. */
+
+/* ── :has() — state without class-toggling JavaScript ──────────────────────────
+ * Baseline Widely available since Jun 2026.
+ */
+/* Dim the sibling cards while one is hovered, with no JS mouse tracking. */
+@media (hover: hover) and (pointer: fine) {
+  .tool-cards:has(.tool-card:hover) .tool-card:not(:hover) { opacity: .78; }
+  .tool-card { transition: transform .3s cubic-bezier(.2, .8, .3, 1), box-shadow .3s, border-color .3s, opacity .25s, --glow-alpha .3s; }
+}
+/* A field containing a focused control lifts its own label. */
+.field:has(input:focus, textarea:focus, select:focus) > label { color: var(--primary); }
+/* Keyboard focus inside a card is visible on the card, not just the button. */
+.tool-card:has(:focus-visible) { border-color: var(--primary); }
+
+/* ── Same-document view transitions ───────────────────────────────────────────
+ * Baseline since Firefox 144 (Oct 2025). Unsupported engines skip the animation
+ * and update the DOM normally; reduced motion opts out in canViewTransition().
+ */
+@media (prefers-reduced-motion: no-preference) {
+  ::view-transition-old(root) { animation: vt-out .18s ease-in both; }
+  ::view-transition-new(root) { animation: vt-in .26s cubic-bezier(.2, .8, .3, 1) both; }
+  @keyframes vt-out { to { opacity: 0; translate: 0 -6px; } }
+  @keyframes vt-in { from { opacity: 0; translate: 0 8px; } }
+  /* The sidebar and top bar persist across routes; keep them out of the fade. */
+  .sidebar { view-transition-name: sidebar; }
+  .topbar { view-transition-name: topbar; }
+  ::view-transition-group(sidebar), ::view-transition-group(topbar) { animation: none; }
+}

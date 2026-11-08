@@ -3,18 +3,27 @@ import { useEffect } from 'react'
 const prefersReducedMotion = () =>
   typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
+/** Native scroll-driven animations are Baseline since Firefox 159 (Oct 2026). */
+const hasScrollTimeline = () =>
+  typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && CSS.supports('animation-timeline: view()')
+
 /**
  * Reveals `[data-reveal]` blocks as they scroll into view.
  *
- * Elements are only hidden once JavaScript has armed them, so a scripting
- * failure, a missing IntersectionObserver, or reduced motion all leave the
- * content fully visible rather than stuck at opacity zero.
+ * Where the browser supports `animation-timeline: view()` the reveal runs entirely
+ * in CSS on the compositor, so this hook does nothing at all — no observer, no
+ * class writes, no scroll work on the main thread. The IntersectionObserver path
+ * below is only the fallback for engines without scroll timelines.
+ *
+ * Either way content is never left hidden: elements are armed only after JS runs,
+ * and reduced motion skips both paths.
  */
 export function useReveal(route: string) {
   useEffect(() => {
+    if (prefersReducedMotion() || hasScrollTimeline()) return
     const nodes = Array.from(document.querySelectorAll<HTMLElement>('[data-reveal]'))
     if (!nodes.length) return
-    if (prefersReducedMotion() || typeof IntersectionObserver === 'undefined') {
+    if (typeof IntersectionObserver === 'undefined') {
       nodes.forEach((node) => node.classList.add('is-revealed'))
       return
     }
@@ -95,3 +104,9 @@ export function usePointerTilt() {
     }
   }, [])
 }
+
+/** Same-document view transitions are Baseline; unsupported engines just skip the animation. */
+export const canViewTransition = () =>
+  typeof document !== 'undefined'
+  && typeof (document as Document & { startViewTransition?: unknown }).startViewTransition === 'function'
+  && !prefersReducedMotion()
