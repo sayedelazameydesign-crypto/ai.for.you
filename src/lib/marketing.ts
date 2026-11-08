@@ -23,8 +23,9 @@ export function generateMarketing(input: MarketingInput, round = 0): MarketingRe
   if (product.length > 80 || audience.length > 160 || benefit.length > 400) throw new Error('يرجى الالتزام بحدود الحقول.')
   const english = input.language === 'en'
   const tag = product.replace(/[^\p{L}\p{N}]/gu, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')
+  const safeTag = tag || (english ? 'ForYou' : 'لك')
   const platformTag = input.platform === 'linkedin' ? '#أعمال' : input.platform === 'x' ? '#أفكار' : '#اكتشف_المزيد'
-  const hashtags = english ? `#${tag.replace(/[^\u0020-\u007E]/g, 'ForYou')} #MadeForYou` : `#${tag} ${platformTag}`
+  const hashtags = english ? `#${safeTag} #MadeForYou` : `#${safeTag} ${platformTag}`
   const offset = ((round % 3) + 3) % 3
   const texts = english ? makeEnglish(input, product, audience, benefit, offset) : makeArabic(input, product, audience, benefit, offset)
   const labels = english ? ['Story-led', 'Benefit-first', 'Conversation starter'] : ['ابدأ بقصة', 'ركّز على القيمة', 'افتح حواراً']
@@ -34,7 +35,8 @@ export function generateMarketing(input: MarketingInput, round = 0): MarketingRe
       let body = text
       if (input.platform === 'x') {
         const limit = 280 - hashtags.length - 2
-        if (body.length > limit) body = `${product} — ${benefit.slice(0, Math.max(0, limit - product.length - 18))}… ${english ? 'Discover more.' : 'اكتشف المزيد.'}`
+        const suffix = english ? '… Discover more.' : '… اكتشف المزيد.'
+        if (body.length > limit) body = `${product} — ${benefit.slice(0, Math.max(0, limit - product.length - 3 - suffix.length))}${suffix}`
         if (body.length > limit) body = body.slice(0, limit)
       }
       return { id: `v-${round}-${i}`, label: labels[i], text: `${body}\n\n${hashtags}` }

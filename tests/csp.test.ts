@@ -1,8 +1,17 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { contentSecurityPolicy, metaContentSecurityPolicy, SECURITY_HEADERS } from '../config/security-headers'
+import { contentSecurityPolicy, metaContentSecurityPolicy, SECURITY_HEADERS, vercelHeaderContentSecurityPolicy } from '../config/security-headers'
 
 const directives = (policy: string) => policy.split(';').map((part) => part.trim()).filter(Boolean)
 const directive = (policy: string, name: string) => directives(policy).find((part) => part.startsWith(`${name} `))
+
+/** Evaluate whether a fetch target is permitted by a single CSP policy (connect-src -> default-src). */
+function allowsConnect(policy: string, targetOrigin: string, selfOrigin = 'https://celia.sh'): boolean {
+  const effective = directive(policy, 'connect-src') ?? directive(policy, 'default-src')
+  if (!effective) return true // CSP3: absent connect-src and absent default-src imposes no connect restriction.
+  const tokens = effective.split(/\s+/).slice(1)
+  return tokens.some((token) => (token === "'self'" ? targetOrigin === selfOrigin : token === targetOrigin))
+}
 
 describe('A5 — content security policy', () => {
   it('locks script execution to same-origin bundles in production', () => {
@@ -64,6 +73,32 @@ describe('A5 — content security policy', () => {
     expect(SECURITY_HEADERS['X-Content-Type-Options']).toBe('nosniff')
     expect(SECURITY_HEADERS['X-Frame-Options']).toBe('DENY')
     expect(SECURITY_HEADERS['Referrer-Policy']).toBe('strict-origin-when-cross-origin')
+  })
+
+  it('keeps vercel.json synchronized with the static edge policy so VITE_API_BASE is never blocked', () => {
+    const vercel = JSON.parse(readFileSync('vercel.json', 'utf8')) as {
+      headers: { source: string; headers: { key: string; value: string }[] }[]
+    }
+    const header = vercel.headers
+      .flatMap((rule) => rule.headers)
+      .find((entry) => entry.key === 'Content-Security-Policy')?.value
+    expect(header).toBe(vercelHeaderContentSecurityPolicy())
+    expect(directive(header!, 'frame-ancestors')).toBe("frame-ancestors 'none'")
+    expect(directive(header!, 'script-src')).toBe("script-src 'self'")
+    expect(directive(header!, 'connect-src')).toBeUndefined()
+    expect(directive(header!, 'default-src')).toBeUndefined()
+  })
+
+  it('allows a configured VITE_API_BASE across the intersected Vercel header and HTML meta policies', () => {
+    const edgeHeader = vercelHeaderContentSecurityPolicy()
+    const defaultPolicies = [edgeHeader, metaContentSecurityPolicy()]
+    expect(defaultPolicies.every((p) => allowsConnect(p, 'https://celia.sh'))).toBe(true)
+    expect(defaultPolicies.every((p) => allowsConnect(p, 'https://api.example.com'))).toBe(false)
+
+    const splitApiPolicies = [edgeHeader, metaContentSecurityPolicy({ apiBase: 'https://api.example.com' })]
+    expect(splitApiPolicies.every((p) => allowsConnect(p, 'https://celia.sh'))).toBe(true)
+    expect(splitApiPolicies.every((p) => allowsConnect(p, 'https://api.example.com'))).toBe(true)
+    expect(splitApiPolicies.every((p) => allowsConnect(p, 'https://evil.test'))).toBe(false)
   })
 })
 

@@ -12,7 +12,7 @@ export interface ServerTool<I = never, R = never> {
   id: ToolId
   validateInput(input: Record<string, unknown>): boolean
   prompt(input: I): string
-  validateResult(value: Record<string, unknown>): boolean
+  validateResult(value: Record<string, unknown>, input: I): boolean
   finalize(result: R, input: I): Promise<Record<string, unknown>> | Record<string, unknown>
 }
 
@@ -20,7 +20,7 @@ export interface AnyServerTool {
   id: ToolId
   validateInput(input: Record<string, unknown>): boolean
   prompt(input: unknown): string
-  validateResult(value: Record<string, unknown>): boolean
+  validateResult(value: Record<string, unknown>, input: unknown): boolean
   finalize(result: unknown, input: unknown): Promise<Record<string, unknown>> | Record<string, unknown>
 }
 

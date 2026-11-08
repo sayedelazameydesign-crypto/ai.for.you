@@ -84,6 +84,32 @@ export function metaContentSecurityPolicy(options: CspOptions = {}): string {
 }
 
 /**
+ * Static HTTP header policy for `vercel.json`.
+ *
+ * `vercel.json` is static in Git and cannot interpolate `VITE_API_BASE` at build
+ * time. Because browsers enforce the intersection of every active CSP policy,
+ * shipping a static `connect-src 'self'` (or a `default-src 'self'` fallback) in
+ * `vercel.json` silently blocks an external `VITE_API_BASE` that `index.html`'s
+ * build-resolved `<meta>` policy explicitly allowed.
+ *
+ * Keeping only the origin-invariant directives here enforces `frame-ancestors`
+ * (which `<meta>` cannot express) and script/object/base/form lock-down at the
+ * HTTP edge, while `index.html`'s `<meta>` policy enforces `default-src`,
+ * `connect-src` (including `apiBase` when configured), `style-src`, `img-src`,
+ * `font-src` and `manifest-src`.
+ */
+export function vercelHeaderContentSecurityPolicy(): string {
+  return [
+    "base-uri 'self'",
+    "form-action 'self'",
+    "object-src 'none'",
+    "script-src 'self'",
+    "frame-ancestors 'none'",
+    "upgrade-insecure-requests",
+  ].join('; ')
+}
+
+/**
  * A second, independent layer for the two things CSP does not cover:
  * MIME sniffing and leaked referrers. Vercel sets these as headers; Pages
  * cannot, so they are also emitted as meta where the browser honours them.

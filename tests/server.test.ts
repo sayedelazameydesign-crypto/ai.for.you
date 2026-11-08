@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { completionBudget, handleRequest, isConfigured, validateRequest, type AIEnvironment } from '../server/ai'
+import { completionBudget, handleRequest, isConfigured, resolveServerEnv, SERVER_ENV_KEYS, validateRequest, type AIEnvironment } from '../server/ai'
 import { marketingExample } from '../src/lib/marketing'
 import { summaryExample } from '../src/lib/summary'
 
@@ -128,6 +128,106 @@ describe('server-only AI configuration', () => {
     setup.env.AI_DAILY_LIMIT = '1'
     expect((await handleRequest(request(), setup, `daily-a-${time}`)).status).toBe(200)
     expect((await handleRequest(request(), setup, `daily-b-${time}`)).status).toBe(429)
+  })
+  it('does not burn the deployment daily ceiling on rejected or misconfigured requests', async () => {
+    time += 86400000
+    const setup = config(marketingResult)
+    setup.env.AI_DAILY_LIMIT = '1'
+
+    const badJson = new Request('https://example.test/api/v1/ai', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-lek-access': env.AI_ACCESS_CODE },
+      body: '{not-valid-json',
+    })
+    expect((await handleRequest(badJson, setup, `rej-json-${time}`)).status).toBe(400)
+
+    const oversized = request({ tool: 'marketing', input: { ...marketingExample, benefit: 'x'.repeat(65000) }, consent: true })
+    expect((await handleRequest(oversized, setup, `rej-size-${time}`)).status).toBe(413)
+
+    const noConsent = request({ tool: 'marketing', input: marketingExample, consent: false })
+    expect((await handleRequest(noConsent, setup, `rej-consent-${time}`)).status).toBe(400)
+
+    const badInput = request({ tool: 'summary', input: { text: 'قصير', language: 'ar', length: 'short' }, consent: true })
+    expect((await handleRequest(badInput, setup, `rej-input-${time}`)).status).toBe(400)
+
+    const badModelSetup = { ...setup, env: { ...setup.env, GROQ_MODEL: 'bad model spaces!' } }
+    expect((await handleRequest(request(), badModelSetup, `rej-model-${time}`)).status).toBe(503)
+    expect(setup.fetcher).not.toHaveBeenCalled()
+
+    // The single daily slot must still be available for a valid request.
+    expect((await handleRequest(request(), setup, `valid-after-rejections-${time}`)).status).toBe(200)
+    expect(setup.fetcher).toHaveBeenCalledOnce()
+    expect((await handleRequest(request(), setup, `second-valid-${time}`)).status).toBe(429)
+  })
+  it('still throttles per-client bursts of invalid requests without starving other clients', async () => {
+    time += 86400000
+    const setup = config(marketingResult)
+    setup.env.AI_DAILY_LIMIT = '1'
+    const attacker = `burst-attacker-${time}`
+    const makeBad = () => new Request('https://example.test/api/v1/ai', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-lek-access': env.AI_ACCESS_CODE },
+      body: '{broken',
+    })
+
+    for (let i = 0; i < 6; i++) {
+      expect((await handleRequest(makeBad(), setup, attacker)).status).toBe(400)
+    }
+    const throttled = await handleRequest(makeBad(), setup, attacker)
+    expect(throttled.status).toBe(429)
+    expect((await throttled.json()).error.code).toBe('rate-limit')
+
+    // Another client can still spend the untouched daily quota slot.
+    expect((await handleRequest(request(), setup, `honest-client-${time}`)).status).toBe(200)
+  })
+  it('enforces the 280-character X limit on provider output while keeping longer posts elsewhere', async () => {
+    const xInput = { ...marketingExample, platform: 'x' as const }
+    const tooLongForX = { variants: [{ id: 'v1', label: 'منشور', text: 'س'.repeat(281) }] }
+    const rejected = await handleRequest(request({ tool: 'marketing', input: xInput, consent: true }), config(tooLongForX))
+    expect(rejected.status).toBe(502)
+    expect((await rejected.json()).error.code).toBe('output')
+
+    const exactX = { variants: [{ id: 'v1', label: 'منشور', text: 'س'.repeat(280) }] }
+    const acceptedX = await handleRequest(request({ tool: 'marketing', input: xInput, consent: true }), config(exactX))
+    expect(acceptedX.status).toBe(200)
+
+    const longLinkedIn = { variants: [{ id: 'v1', label: 'منشور', text: 'س'.repeat(600) }] }
+    const acceptedLinkedIn = await handleRequest(
+      request({ tool: 'marketing', input: { ...marketingExample, platform: 'linkedin' }, consent: true }),
+      config(longLinkedIn),
+    )
+    expect(acceptedLinkedIn.status).toBe(200)
+  })
+  it('forwards every declared server environment key without leaking client variables', () => {
+    const loaded = {
+      GROQ_API_KEY: 'key-from-dotenv',
+      GROQ_MODEL: '',
+      AI_ACCESS_CODE: 'access-from-dotenv',
+      AI_DAILY_LIMIT: '75',
+      AI_PROVIDER: 'groq',
+      AI_MAX_TOKENS: '2048',
+      AI_ALLOWED_ORIGINS: 'https://celia.sh',
+      AI_TIMEOUT_MS: '15000',
+      AI_TRUSTED_PROXY: 'x-vercel-forwarded-for',
+      VITE_SITE_URL: 'https://celia.sh',
+      UNRELATED_SECRET: 'ignored',
+    }
+    const fallback = { GROQ_MODEL: 'llama-3.3-70b-versatile', AI_MAX_TOKENS: '4096' }
+    const resolved = resolveServerEnv(loaded, fallback)
+    expect(SERVER_ENV_KEYS).toHaveLength(9)
+    expect(resolved).toEqual({
+      GROQ_API_KEY: 'key-from-dotenv',
+      GROQ_MODEL: 'llama-3.3-70b-versatile',
+      AI_ACCESS_CODE: 'access-from-dotenv',
+      AI_DAILY_LIMIT: '75',
+      AI_PROVIDER: 'groq',
+      AI_MAX_TOKENS: '2048',
+      AI_ALLOWED_ORIGINS: 'https://celia.sh',
+      AI_TIMEOUT_MS: '15000',
+      AI_TRUSTED_PROXY: 'x-vercel-forwarded-for',
+    })
+    expect(resolved).not.toHaveProperty('VITE_SITE_URL')
+    expect(resolved).not.toHaveProperty('UNRELATED_SECRET')
   })
 })
 
