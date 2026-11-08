@@ -14,16 +14,16 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text-summary', 'text'],
-      // Measured on 2026-11-08, before this file enforced anything:
-      // statements 68.22%, branches 67.19%, functions 64.49%, lines 78.47%.
-      // Thresholds sit just under the measured floor so they catch a real drop
-      // without failing on unrelated refactors. Raise them when they are beaten;
-      // never lower them to make a red build green.
+      // Measured on 2026-11-08, first before enforcement (68.22 / 67.19 /
+      // 64.49 / 78.47), then again after the A3/A5/A11 fixes added their tests
+      // (70.23 / 69.09 / 66.66 / 80.32). Thresholds were raised to sit just
+      // under the new floor. Raise them when they are beaten; never lower them
+      // to make a red build green.
       thresholds: {
-        statements: 66,
-        branches: 65,
-        functions: 62,
-        lines: 76,
+        statements: 69,
+        branches: 68,
+        functions: 65,
+        lines: 79,
       },
       // Generated and configuration-only files carry no logic worth gating.
       exclude: ['vite.config.ts', 'vitest.config.ts', 'playwright.config.ts', 'config/**', 'scripts/**'],

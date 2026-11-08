@@ -33,6 +33,23 @@ if (!html.includes('<div id="root"></div>')) fail('missing_root')
 if (/__(TITLE|DESCRIPTION|THEME_COLOR)__/.test(html)) fail('unreplaced_placeholder')
 if (!/<script[^>]+type="module"/.test(html)) fail('missing_bundle')
 
+// A5: the published artifact must carry the policy. GitHub Pages cannot send
+// headers, so the meta tag is the only enforcement there and it must exist.
+const cspMeta = /<meta http-equiv="Content-Security-Policy" content="([^"]+)"/.exec(html)
+if (!cspMeta) fail('missing_csp_meta')
+// The attribute is HTML-escaped in the artifact; compare against the real policy.
+const csp = cspMeta[1]
+  .replaceAll('&#39;', "'")
+  .replaceAll('&quot;', '"')
+  .replaceAll('&amp;', '&')
+  .replaceAll('&lt;', '<')
+  .replaceAll('&gt;', '>')
+if (csp.includes("'unsafe-eval'")) fail('csp_allows_eval')
+if (/frame-ancestors/.test(csp)) fail('csp_meta_contains_ignored_directive')
+if (!/script-src 'self'/.test(csp)) fail('csp_missing_script_src')
+if (!/connect-src 'self'/.test(csp)) fail('csp_missing_connect_src')
+if (/connect-src [^;]*\*/.test(csp)) fail('csp_connect_wildcard')
+
 // A secret must never reach a published asset.
 const ASSETS = join(DIST, 'assets')
 if (existsSync(ASSETS)) {

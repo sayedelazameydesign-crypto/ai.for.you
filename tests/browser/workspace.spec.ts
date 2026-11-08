@@ -85,3 +85,48 @@ for (const theme of ['light', 'dark']) {
     }
   })
 }
+
+// A5: the policy must be enforced AND must not break the app. This is the test
+// that decides whether the CSP is safe to ship, so it checks both halves.
+test('content security policy is enforced without breaking assets, fonts or the app', async ({ page }) => {
+  test.setTimeout(60000)
+  const violations: string[] = []
+  const failedRequests: string[] = []
+
+  // SecurityPolicyViolationEvent fires for anything the policy blocks.
+  await page.addInitScript(() => {
+    const seen: string[] = []
+    ;(window as unknown as { __cspViolations: string[] }).__cspViolations = seen
+    document.addEventListener('securitypolicyviolation', (event) => {
+      seen.push(`${event.violatedDirective} ${event.blockedURI}`)
+    })
+  })
+  page.on('requestfailed', (request) => failedRequests.push(request.url()))
+  page.on('console', (message) => {
+    if (/Content Security Policy/i.test(message.text())) violations.push(message.text())
+  })
+
+  await page.goto('/')
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('أدوات صغيرة')
+
+  // Walk every page so lazily loaded assets and fonts are exercised.
+  for (const route of ['/', '/#/marketing', '/#/summary', '/#/code', '/#/saved', '/#/settings', '/#/guide']) {
+    await page.goto(route)
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
+  }
+
+  // The app must still be interactive: generate a result with the local engine.
+  await page.goto('/#/marketing')
+  await page.getByRole('button', { name: 'جرّب مثالاً' }).click()
+  await page.getByRole('button', { name: 'اكتب لي 3 أفكار' }).click()
+  await expect(page.locator('.copy-variant')).toHaveCount(3)
+
+  // Fonts must actually have loaded from our own origin, not been blocked.
+  const fontsLoaded = await page.evaluate(() => document.fonts.check('16px "IBM Plex Sans Arabic"'))
+  expect(fontsLoaded).toBe(true)
+
+  const collected = await page.evaluate(() => (window as unknown as { __cspViolations?: string[] }).__cspViolations ?? [])
+  expect([...violations, ...collected]).toEqual([])
+  // A blocked asset shows up as a failed request; none is acceptable.
+  expect(failedRequests.filter((url) => !url.startsWith('data:'))).toEqual([])
+})

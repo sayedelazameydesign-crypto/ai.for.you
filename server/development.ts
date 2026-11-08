@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Connect } from 'vite'
 import { Readable } from 'node:stream'
 import { handleRequest, type AIEnvironment } from './ai.ts'
-import { clientOf, toHeaders } from './node-adapter.ts'
+import { toHeaders } from './node-adapter.ts'
 
 const API_ROUTE = /^\/api\/(?:v1\/)?(?:ai|status)\/?$/
 
@@ -16,7 +16,7 @@ export function developmentApi(env: AIEnvironment): Connect.NextHandleFunction {
       headers: toHeaders(req.headers),
       ...(req.method !== 'GET' && req.method !== 'HEAD' ? { body: Readable.toWeb(req) as ReadableStream<Uint8Array>, duplex: 'half' } : {}),
     } as RequestInit)
-    void handleRequest(request, { env }, clientOf(req)).then(async (response) => {
+    void handleRequest(request, { env }).then(async (response) => {
       res.statusCode = response.status
       response.headers.forEach((value, key) => res.setHeader(key, value))
       res.end(Buffer.from(await response.arrayBuffer()))
