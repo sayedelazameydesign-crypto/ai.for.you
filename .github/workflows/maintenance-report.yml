@@ -43,6 +43,10 @@ jobs:
 
       # One command produces the whole table. Every row is PASS, FAIL or
       # NOT RUN, and the exit code is non-zero only when something FAILED.
+      #
+      # No --reuse-quality here, deliberately: this is a fresh job, so nothing
+      # has verified the suite yet. Claiming PASS for a check that did not run
+      # in this job would be exactly the lie the NOT RUN state exists to stop.
       - name: Build the maintenance report
         id: report
         continue-on-error: true

@@ -37,6 +37,18 @@ jobs:
       # The maintenance agent's safety claims are asserted, not documented.
       - name: Prove the maintenance agent guards hold
         run: node scripts/agent-guards.mjs
+      # The scheduled report cannot be proven before it is merged (GitHub only
+      # registers a scheduled workflow from the default branch), so its script
+      # runs here on every pull request against the same checks.
+      - name: Exercise the maintenance report script
+        env:
+          PAGE_URL: ${{ vars.SITE_URL || format('https://{0}.github.io/{1}/', github.repository_owner, github.event.repository.name) }}
+          API_BASE: ${{ vars.API_BASE }}
+        run: node scripts/maintenance-report.mjs --reuse-quality
+      # The agent must be able to observe and refuse to write. A dry run proves
+      # the observation path works without granting it anything.
+      - name: Exercise the maintenance agent in dry-run mode
+        run: node scripts/maintenance-agent.mjs --dry-run
       - run: npx playwright install --with-deps chromium
       - run: npm run test:browser
       # The deploy job rebuilds with the hosting identity of the target, so this
