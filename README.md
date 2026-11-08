@@ -45,6 +45,7 @@ npm run check            # lint + tests + build
 npm run preview          # Preview the production build
 npm run test:browser     # Real Chromium + accessibility checks (install browser first)
 npm run test:smoke -- URL # Post-deploy check of a published site
+npm run check:build      # Assert dist/ is complete and within Pages limits
 npm audit --audit-level=high
 ```
 
@@ -144,7 +145,7 @@ tests/            Engines, UI workflows, server security, hosting identity
 
 أضف المعرّف في `shared/tools.ts`، أنشئ وحدة في `server/tools/` وصفحة في `src/pages/`، ثم سجّل كلاً منهما بسطر واحد في سجلّي الأدوات. التنقل والبحث والتوجيه وبطاقات الرئيسية ومرشّحات المكتبة مشتقة من السجل تلقائياً. التفاصيل في [docs/API.md](docs/API.md).
 
-راجع [SECURITY.md](SECURITY.md) للحدود الأمنية وطريقة الإبلاغ عن الثغرات، و[docs/QUALITY.md](docs/QUALITY.md) لتفاصيل الاختبارات وقائمة ما قبل الإطلاق، و[docs/OPERATIONS.md](docs/OPERATIONS.md) لتدوير المفاتيح واختبار Groq الحي، و[docs/API.md](docs/API.md) لعقد API، و[docs/RENAMING.md](docs/RENAMING.md) لتغيير الاسم أو النطاق. لتشغيل اختبارات المتصفح لأول مرة: `npx playwright install chromium`.
+راجع [SECURITY.md](SECURITY.md) للحدود الأمنية وطريقة الإبلاغ عن الثغرات، و[docs/QUALITY.md](docs/QUALITY.md) لتفاصيل الاختبارات وقائمة ما قبل الإطلاق، و[docs/OPERATIONS.md](docs/OPERATIONS.md) لتدوير المفاتيح واختبار Groq الحي، و[docs/API.md](docs/API.md) لعقد API، و[docs/RENAMING.md](docs/RENAMING.md) لتغيير الاسم أو النطاق، و[docs/FREE-TIERS.md](docs/FREE-TIERS.md) للحصص المجانية المتحقَّق منها بالأرقام ومصادرها. لتشغيل اختبارات المتصفح لأول مرة: `npx playwright install chromium`.
 
 ## مراجع رسمية تمت مراجعتها في 8 نوفمبر 2026
 
@@ -154,6 +155,8 @@ tests/            Engines, UI workflows, server security, hosting identity
 - [حدود طلبات Groq](https://console.groq.com/docs/rate-limits)
 - [إعادة تسمية مستودع وما يتحول تلقائياً](https://docs.github.com/en/repositories/creating-and-managing-repositories/renaming-a-repository)
 - [حدود GitHub Pages والاستخدام التجاري](https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits)
+- [الحصص المضمّنة في كل خطة](https://docs.github.com/en/billing/reference/product-usage-included)
+- [الميزانيات ومنع التجاوز](https://docs.github.com/en/billing/how-tos/set-up-budgets)
 
 قد تتغير هذه السياسات؛ راجعها قبل النشر التجاري أو شراء حصة.
 

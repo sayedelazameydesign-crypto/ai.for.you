@@ -30,14 +30,11 @@ jobs:
         run: node scripts/guard-secrets.mjs
       - run: npx playwright install --with-deps chromium
       - run: npm run test:browser
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: site-source
-          path: |
-            dist
-            .nvmrc
-          retention-days: 3
-          if-no-files-found: error
+      # The deploy job rebuilds with the hosting identity of the target, so this
+      # build output has no consumer. Uploading it only spent the 500 MB shared
+      # Actions/Packages storage allowance. Assert the output instead.
+      - name: Assert the build output exists and fits Pages limits
+        run: node scripts/check-build.mjs
 
   deploy:
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
