@@ -1,5 +1,6 @@
 import type { Plugin } from 'vite'
 import type { SiteConfig } from '../shared/site.ts'
+import { metaContentSecurityPolicy, SECURITY_HEADERS } from './security-headers.ts'
 
 const escapeHtml = (value: string): string => value.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!)
 
@@ -7,8 +8,13 @@ const escapeHtml = (value: string): string => value.replace(/[&<>"']/g, (char) =
  * Injects the resolved site identity into the HTML shell and defines the same
  * object for the app. Nothing here is a secret: only public branding and URLs.
  * A custom domain additionally needs a CNAME file in the published artifact.
+ *
+ * `dev` matters for the CSP: Vite's dev server injects an inline React Refresh
+ * preamble and needs eval, so the production policy would break the app while
+ * developing it. The dev policy is deliberately separate and is never emitted
+ * into a build.
  */
-export function sitePlugin(config: SiteConfig, customDomain: string): Plugin {
+export function sitePlugin(config: SiteConfig, customDomain: string, dev = false): Plugin {
   return {
     name: 'celia-site-identity',
     transformIndexHtml(html) {
@@ -19,7 +25,20 @@ export function sitePlugin(config: SiteConfig, customDomain: string): Plugin {
       const graph = config.siteUrl
         ? `<meta property="og:type" content="website" />\n    <meta property="og:site_name" content="${escapeHtml(config.brandLatin)}" />\n    <meta property="og:title" content="${escapeHtml(config.title)}" />\n    <meta property="og:description" content="${escapeHtml(config.description)}" />\n    <meta property="og:url" content="${escapeHtml(config.siteUrl)}" />\n    <meta property="og:locale" content="ar_AR" />\n    <meta property="og:image" content="${escapeHtml(image)}" />\n    <meta property="og:image:width" content="1200" />\n    <meta property="og:image:height" content="630" />\n    <meta property="og:image:alt" content="${escapeHtml(config.brandLatin)}" />\n    <meta name="twitter:card" content="summary_large_image" />\n    <meta name="twitter:title" content="${escapeHtml(config.title)}" />\n    <meta name="twitter:description" content="${escapeHtml(config.description)}" />\n    <meta name="twitter:image" content="${escapeHtml(image)}" />`
         : ''
+      // GitHub Pages cannot send custom headers, so the policy is emitted as a
+      // meta tag there. Vercel sends the same policy as a real header
+      // (vercel.json), which is the stronger form; both are kept so a copy of
+      // dist/ is protected wherever it is served.
+      const meta = [
+        `<meta http-equiv="Content-Security-Policy" content="${escapeHtml(metaContentSecurityPolicy({ apiBase: config.apiBase, dev }))}" />`,
+        // Only the two directives a meta tag actually supports. X-Frame-Options
+        // and Permissions-Policy are ignored as meta, so shipping them there
+        // would be decoration; they are sent as real headers on Vercel.
+        ...['X-Content-Type-Options', 'Referrer-Policy'].map((name) =>
+          `<meta http-equiv="${name}" content="${escapeHtml(SECURITY_HEADERS[name as keyof typeof SECURITY_HEADERS])}" />`),
+      ].join('\n    ')
       return html
+        .replace('<!-- security-headers -->', meta)
         .replaceAll('__TITLE__', escapeHtml(config.title))
         .replaceAll('__DESCRIPTION__', escapeHtml(config.description))
         .replaceAll('__THEME_COLOR__', escapeHtml(config.themeColor))

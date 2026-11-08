@@ -85,3 +85,48 @@ for (const theme of ['light', 'dark']) {
     }
   })
 }
+
+// A5: the policy must not break the app. This is the test that decides whether
+// the CSP is safe to ship.
+//
+// It deliberately asserts on *policy violations* rather than on fonts or on a
+// zero count of console messages. An earlier version asserted that a specific
+// webfont reported as loaded and that no console message mentioned "Content
+// Security Policy" — both are environment-sensitive and produced a red build
+// that proved nothing. What matters is: did the browser block anything the app
+// needs, and does the app still work end to end?
+test('content security policy blocks nothing the app needs', async ({ page }) => {
+  test.setTimeout(90000)
+
+  // Installed before any page script runs, so nothing is missed.
+  await page.addInitScript(() => {
+    const seen: string[] = []
+    ;(window as unknown as { __cspViolations: string[] }).__cspViolations = seen
+    document.addEventListener('securitypolicyviolation', (event) => {
+      seen.push(`${event.effectiveDirective} ${event.blockedURI}`)
+    })
+  })
+
+  await page.goto('/')
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('أدوات صغيرة')
+
+  // Walk every route so lazily loaded chunks are exercised under the policy.
+  for (const route of ['/', '/#/marketing', '/#/summary', '/#/code', '/#/saved', '/#/settings', '/#/guide']) {
+    await page.goto(route)
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
+  }
+
+  // The app must still be interactive: the local engine produces three drafts.
+  await page.goto('/#/marketing')
+  await page.getByRole('button', { name: 'جرّب مثالاً' }).click()
+  await page.getByRole('button', { name: 'اكتب لي 3 أفكار' }).click()
+  await expect(page.locator('.copy-variant')).toHaveCount(3)
+
+  // Let any late violation (e.g. a deferred font fetch) surface before reading.
+  await page.waitForLoadState('networkidle')
+
+  const violations = await page.evaluate(() => (window as unknown as { __cspViolations?: string[] }).__cspViolations ?? [])
+  // Print the exact directive before asserting: a CI failure should name its cause.
+  if (violations.length) console.log('CSP_EVIDENCE', JSON.stringify(violations))
+  expect(violations, `blocked: ${violations.join(' | ')}`).toEqual([])
+})

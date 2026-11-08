@@ -12,11 +12,14 @@ export function toHeaders(source: IncomingMessage['headers']): Headers {
   return headers
 }
 
-/** Best-effort client identity for the in-process rate limiter. */
-export function clientOf(req: IncomingMessage): string {
-  return req.headers['x-forwarded-for']?.toString().split(',')[0]?.trim() || req.socket.remoteAddress || 'unknown'
-}
-
+/**
+ * Client identity is deliberately NOT extracted here.
+ *
+ * The socket address of a serverless invocation is the edge, not the visitor,
+ * and forwarding headers are caller-controlled. `server/ai.ts` derives the
+ * limiter key from the declared `AI_TRUSTED_PROXY`, so a spoofed header cannot
+ * reset a bucket by construction rather than by sanitizing a string.
+ */
 export async function serve(req: PlatformRequest, res: ServerResponse, env: AIEnvironment, path: string): Promise<void> {
   const host = req.headers.host ?? 'localhost'
   const body = typeof req.body === 'string' ? req.body : req.body === undefined ? undefined : JSON.stringify(req.body)
@@ -25,7 +28,7 @@ export async function serve(req: PlatformRequest, res: ServerResponse, env: AIEn
     headers: toHeaders(req.headers),
     ...(body !== undefined && req.method !== 'GET' && req.method !== 'HEAD' ? { body } : {}),
   })
-  const response = await handleRequest(request, { env }, clientOf(req))
+  const response = await handleRequest(request, { env })
   res.statusCode = response.status
   response.headers.forEach((value, key) => res.setHeader(key, value))
   res.end(Buffer.from(await response.arrayBuffer()))

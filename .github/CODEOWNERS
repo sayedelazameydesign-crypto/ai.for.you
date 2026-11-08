@@ -1,0 +1,11 @@
+# Every change lands through a pull request reviewed by the owner.
+# GitHub only enforces this after "Require review from Code Owners" is enabled
+# in Settings -> Branches. See docs/SELF-MAINTAINING.md, gate G1.
+* @sayedelazameydesign-crypto
+
+# Changes that can silently widen the attack surface or break the contract.
+/server/ @sayedelazameydesign-crypto
+/shared/contract.ts @sayedelazameydesign-crypto
+/.github/workflows/ @sayedelazameydesign-crypto
+/scripts/guard-secrets.mjs @sayedelazameydesign-crypto
+/SECURITY.md @sayedelazameydesign-crypto

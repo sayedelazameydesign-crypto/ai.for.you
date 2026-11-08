@@ -6,6 +6,8 @@ import { isRecord } from './tools/types.ts'
 import { serverTools } from './tools/index.ts'
 import { defaultProvider, providers } from './providers/index.ts'
 import type { Provider } from './providers/types.ts'
+import { recordMetric, type MetricsSink } from './metrics.ts'
+import { clientKey, trustedProxy } from './client-identity.ts'
 
 export { completionBudget } from './providers/groq.ts'
 
@@ -18,18 +20,33 @@ export interface AIEnvironment {
   AI_MAX_TOKENS?: string
   AI_ALLOWED_ORIGINS?: string
   AI_TIMEOUT_MS?: string
+  /** Declared source of the client address. Unset means a single shared bucket. */
+  AI_TRUSTED_PROXY?: string
 }
 export interface ServerConfig {
   env: AIEnvironment
   fetcher?: typeof fetch
   now?: () => number
   sleep?: (ms: number) => Promise<void>
+  /** Where the one-line, content-free request metric goes. Defaults to console.log. */
+  metrics?: MetricsSink
 }
 
 const MAX_BODY = 64000
 const MINUTE = 60000
 const PER_MINUTE = 6
 const DEFAULT_TIMEOUT = 24000
+/**
+ * Hard ceiling for an upstream call.
+ *
+ * The hosting function is capped at 30 s (`maxDuration` in vercel.json). If the
+ * application waited longer, the platform would kill the function first and the
+ * client would receive an opaque 504 from the edge, with no `timeout` code, no
+ * metric line, and no actionable message. Stopping at 25 s leaves a margin for
+ * the platform's own shutdown so the application always answers first and
+ * always answers in its own vocabulary.
+ */
+const MAX_TIMEOUT = 25000
 const MAX_RETRY_WAIT = 2000
 const buckets = new Map<string, { count: number; reset: number }>()
 let daily = { count: 0, day: '' }
@@ -37,6 +54,16 @@ let daily = { count: 0, day: '' }
 const boundedInt = (raw: string | undefined, fallback: number, min: number, max: number): number => {
   const value = Number(raw)
   return Number.isInteger(value) && value >= min && value <= max ? value : fallback
+}
+
+/**
+ * The deadline actually applied to an upstream call.
+ *
+ * Exported so a test can assert the clamp directly instead of inferring it from
+ * wall-clock timing, which is what made the first version of this test flaky.
+ */
+export function upstreamTimeout(env: AIEnvironment): number {
+  return boundedInt(env.AI_TIMEOUT_MS, DEFAULT_TIMEOUT, 1000, MAX_TIMEOUT)
 }
 
 export function resolveProvider(env: AIEnvironment): Provider {
@@ -90,6 +117,16 @@ async function readBounded(request: Request): Promise<string> {
   return new TextDecoder().decode(Buffer.concat(chunks))
 }
 
+/**
+ * Clear in-process counters. Exposed for tests and for a process restart, not
+ * for route handlers: a public reset endpoint would let a caller erase the
+ * daily ceiling, which is the one protection the shared bucket provides.
+ */
+export function resetRateLimits(): void {
+  buckets.clear()
+  daily = { count: 0, day: '' }
+}
+
 function allowRequest(client: string, now: number, limit: number): boolean {
   for (const [key, bucket] of buckets) if (bucket.reset <= now) buckets.delete(key)
   const bucket = buckets.get(client) ?? { count: 0, reset: now + MINUTE }
@@ -130,7 +167,52 @@ function endpointOf(pathname: string): 'status' | 'ai' | null {
   return match ? match[1] as 'status' | 'ai' : null
 }
 
-export async function handleRequest(request: Request, config: ServerConfig, client = 'unknown'): Promise<Response> {
+export async function handleRequest(request: Request, config: ServerConfig, client?: string): Promise<Response> {
+  const startedAt = Date.now()
+  const meta: RequestMeta = {}
+  // The caller may pass an identity (tests, a future authenticated user id).
+  // When it does not, the key comes from configuration — never from a header
+  // the request itself can choose.
+  const identity = client ?? clientKey(request.headers, trustedProxy(config.env.AI_TRUSTED_PROXY))
+  const response = await routeRequest(request, config, identity, meta)
+  // One content-free line per AI request. Only the AI endpoint emits metrics:
+  // the status probe is polled by uptime checks and would drown the signal.
+  if (endpointOf(new URL(request.url).pathname) === 'ai') {
+    const code = await peekErrorCode(response)
+    recordMetric({
+      outcome: code === 'ok' ? 'ok' : FAILED_CODES.has(code) ? 'failed' : 'rejected',
+      code,
+      tool: meta.tool,
+      status: response.status,
+      startedAt,
+    }, config.metrics)
+  }
+  return response
+}
+
+/** Server-side faults: the operator must act, unlike a rejected client request. */
+const FAILED_CODES = new Set<string>([
+  'timeout', 'provider', 'provider-auth', 'provider-limit', 'provider-request', 'output', 'model', 'not-configured',
+])
+
+/** Read the error code without consuming the client's body. */
+async function peekErrorCode(response: Response): Promise<ErrorCode | 'ok'> {
+  if (!response.ok) {
+    try {
+      const clone = response.clone()
+      const payload = await clone.json() as { error?: { code?: string } }
+      const code = payload?.error?.code
+      if (typeof code === 'string' && /^[a-z-]{2,32}$/.test(code)) return code as ErrorCode
+    } catch { /* fall through to the status-derived code */ }
+    return response.status >= 500 ? 'provider' : 'input'
+  }
+  return 'ok'
+}
+
+/** Filled during routing so the metric can name the tool without re-reading the body. */
+interface RequestMeta { tool?: string }
+
+async function routeRequest(request: Request, config: ServerConfig, client: string, meta: RequestMeta): Promise<Response> {
   const { env } = config
   const url = new URL(request.url)
   const endpoint = endpointOf(url.pathname)
@@ -169,11 +251,12 @@ export async function handleRequest(request: Request, config: ServerConfig, clie
   let body: unknown
   try { body = JSON.parse(await readBounded(request)) }
   catch (error) { return failure(error instanceof Error && error.message === 'body-too-large' ? 413 : 400, 'body', 'الطلب غير صالح أو يتجاوز الحجم المسموح.', cors) }
+  if (isRecord(body) && typeof body.tool === 'string') meta.tool = body.tool
   if (!validateRequest(body)) return failure(400, 'input', 'راجع الحقول والحدود: النص حتى 12,000 حرف للوضع السحابي، ويجب الموافقة على إرساله.', cors)
   const model = env.GROQ_MODEL?.trim() || provider.defaultModel
   if (!/^[\w./-]{1,120}$/.test(model)) return failure(503, 'model', 'إعداد اسم النموذج غير صالح.', cors)
 
-  const timeout = boundedInt(env.AI_TIMEOUT_MS, DEFAULT_TIMEOUT, 1000, 55000)
+  const timeout = upstreamTimeout(env)
   const maxTokens = boundedInt(env.AI_MAX_TOKENS, 4096, 1024, 8192)
   const apiKey = env[provider.keyEnv as keyof AIEnvironment]!.trim()
   const fetcher = config.fetcher ?? fetch

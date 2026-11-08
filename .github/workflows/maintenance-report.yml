@@ -1,0 +1,96 @@
+name: Weekly maintenance report
+
+# Pipeline position: Report.
+#
+# This workflow is the *measurement* half of self-maintenance. It does not
+# diagnose by guessing and does not fix anything: it produces a PASS / FAIL /
+# NOT RUN table that a human reads, and keeps that table on the run summary.
+#
+#   M1  enforce        -> blocked: needs the owner (branch protection, G1/G2)
+#   M2  report         -> this file
+#   M3  propose fixes  -> maintenance-agent.yml (opens a PR, cannot merge)
+#
+# Why NOT RUN exists: a check that could not run (no secret, no variable, no
+# artifact) must not be counted as healthy. A report that turns "unknown" into
+# "pass" is worse than no report.
+
+on:
+  schedule:
+    # Mondays 04:17 UTC: after Dependabot's Monday run, before the working week.
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: weekly-maintenance-report
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      # One command produces the whole table. Every row is PASS, FAIL or
+      # NOT RUN, and the exit code is non-zero only when something FAILED.
+      #
+      # No --reuse-quality here, deliberately: this is a fresh job, so nothing
+      # has verified the suite yet. Claiming PASS for a check that did not run
+      # in this job would be exactly the lie the NOT RUN state exists to stop.
+      - name: Build the maintenance report
+        id: report
+        continue-on-error: true
+        env:
+          PAGE_URL: ${{ vars.SITE_URL || format('https://{0}.github.io/{1}/', github.repository_owner, github.event.repository.name) }}
+          API_BASE: ${{ vars.API_BASE }}
+        run: node scripts/maintenance-report.mjs --json maintenance-report.json
+
+      # Publish the report where a person will actually look at it: the issue
+      # tracker. A failed report opens one issue; repeats comment on it.
+      - name: Publish a failing report as an issue
+        if: steps.report.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          TITLE="Weekly maintenance report: a check is failing"
+          BODY="$(printf '%s\n' \
+            "The scheduled maintenance report found at least one **FAIL**." \
+            "" \
+            "Full table (also on the run summary): $RUN_URL" \
+            "" \
+            "**What this means.** The check ran and was unhealthy. This issue is evidence, not a fix." \
+            "" \
+            "**Repair path.** Reproduce with \`npm ci && node scripts/maintenance-report.mjs\`," \
+            "then open a pull request. Merging still requires a green \`quality\` job." \
+            "" \
+            "Close this issue only after a later report passes.")"
+          EXISTING="$(gh issue list --state open --search "\"$TITLE\" in:title" --json number --jq '.[0].number // empty')"
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "$BODY"
+          else
+            gh issue create --title "$TITLE" --body "$BODY"
+          fi
+
+      - name: Keep the report as a downloadable artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: maintenance-report
+          path: maintenance-report.json
+          retention-days: 90
+          if-no-files-found: ignore
+
+      - name: Fail the run so the failure is visible in Actions too
+        if: steps.report.outcome == 'failure'
+        run: exit 1

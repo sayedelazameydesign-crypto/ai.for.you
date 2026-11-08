@@ -1,0 +1,107 @@
+name: Maintenance agent (proposal only)
+
+# Pipeline position: Propose.
+#
+# The agent opens a pull request. It cannot merge, cannot push to `main`,
+# cannot deploy, and cannot edit application code, tests, workflows or secrets.
+# Those limits are enforced twice: in scripts/maintenance-agent.mjs (path and
+# secret guards) and here by the token scope below.
+#
+# Scope of this token, chosen deliberately:
+#   contents: write  -> only enough to push `maintenance/...` branches
+#   pull-requests: write -> only enough to open the proposal
+#   issues: write    -> report a blocked proposal
+# It is NOT given: actions: write, deployments: write, packages: write,
+# or id-token: write. It therefore cannot publish, cannot deploy, and cannot
+# mint an OIDC token.
+#
+# Trigger policy: never on `pull_request`. A fork must not be able to reach
+# this job's token. Scheduled runs are also limited to routine updates.
+
+on:
+  schedule:
+    # Monthly, a week after the weekly report, so failures are already visible.
+    - cron: '41 4 * * 1'
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Set to true to open a proposal pull request. Anything else is a dry run.'
+        required: false
+        default: 'false'
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: maintenance-agent
+  cancel-in-progress: false
+
+jobs:
+  propose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # A scheduled agent must never touch the default branch directly: the script
+    # refuses it anyway, and the explicit check below makes the intent auditable.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+
+      # Guards first: if the safety harness fails, nothing else runs.
+      - name: Prove the agent guards still hold
+        run: node scripts/agent-guards.mjs
+
+      - name: Dry run (always executed, costs nothing)
+        run: node scripts/maintenance-agent.mjs --dry-run
+
+      - name: Propose routine updates
+        id: propose
+        if: github.event_name == 'schedule' || github.event.inputs.apply == 'true'
+        env:
+          APPLY: 'true'
+        run: |
+          node scripts/maintenance-agent.mjs --apply
+          BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          if [ "$BRANCH" = "main" ]; then
+            echo "::error::agent_tried_to_commit_on_main"; exit 1
+          fi
+
+      - name: Open the pull request
+        id: pr
+        if: steps.propose.outputs.branch && steps.propose.outputs.branch != 'main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ steps.propose.outputs.branch }}
+        run: |
+          git push --force-with-lease origin "$BRANCH"
+          TITLE="Proposal: routine dependency updates"
+          # The PR body states its own limits so a reviewer never assumes more.
+          BODY="**Opened by the maintenance agent. It cannot merge this.**"$'\n\n'
+          BODY+="- Only \`package.json\`, \`package-lock.json\` and \`CHANGELOG.md\` may change."$'\n'
+          BODY+="- Patch and minor updates only. A major (React, Vite, TypeScript, ESLint) is deliberately excluded."$'\n'
+          BODY+="- \`npm run check\` passed before the proposal was created."$'\n'
+          BODY+="- Guards: \`node scripts/agent-guards.mjs\` passed (14 checks)."$'\n\n'
+          BODY+="**Reviewer:** confirm the suite is green on this branch, then merge or close. Closing is a valid outcome."
+          EXISTING="$(gh pr list --head "$BRANCH" --json number --jq '.[0].number // empty')"
+          if [ -n "$EXISTING" ]; then
+            gh pr comment "$EXISTING" --body "New proposal pushed to this branch."
+          else
+            gh pr create --base main --head "$BRANCH" --title "$TITLE" --body "$BODY"
+          fi
+
+      - name: Report a blocked proposal
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          TITLE="Maintenance agent: proposal blocked"
+          BODY="The maintenance agent refused to propose a change. Nothing was merged or deployed. Run: $RUN_URL"
+          EXISTING="$(gh issue list --state open --search "\"$TITLE\" in:title" --json number --jq '.[0].number // empty')"
+          if [ -n "$EXISTING" ]; then gh issue comment "$EXISTING" --body "$BODY"; else gh issue create --title "$TITLE" --body "$BODY"; fi

@@ -10,6 +10,8 @@ npx playwright install chromium
 npm run test:browser
 node scripts/guard-secrets.mjs
 npm run check:build
+npm run check:sql
+npm run check:evidence -- --full
 npm run test:smoke -- <published-url> [api-base]
 ```
 
@@ -22,7 +24,7 @@ Coverage includes:
 - JavaScript/JSX/TypeScript syntax, JSON, source locations, safe formatting.
 - Explicit saving, persistence, search, deletion, file validation and downloads.
 - Server-only secrets, access code, consent, origin checks, bounded bodies, provider error mapping, per-client and daily ceilings.
-- Real Chromium desktop/mobile workflows, theme persistence, deep links, keyboard focus and no horizontal overflow.
+- Real Chromium desktop/mobile workflows, theme persistence, deep links, keyboard focus and no horizontal overflow (12 tests in 2 files, listed by `npx playwright test --list`; the count is asserted in `docs/EVIDENCE.md`, so a change here fails the build if the doc is not updated).
 - axe-core WCAG A/AA automated checks on all seven core pages in light and dark themes.
 - Hosting identity resolved from the environment: repository rename, custom domain, rejected non-http schemes, CNAME and base normalization.
 - Both tool registries stay in sync with the shared id list.

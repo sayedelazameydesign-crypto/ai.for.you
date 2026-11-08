@@ -5,7 +5,7 @@ import { developmentApi } from './server/development.ts'
 import { resolveSiteConfig } from './shared/site.ts'
 import { normalizeBase, normalizeDomain, sitePlugin } from './config/site-plugin.ts'
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ mode, command }) => {
   // Unprefixed secrets stay in this server closure; never pass them to define.
   const env = loadEnv(mode, process.cwd(), '')
   const merged = { ...process.env, ...env }
@@ -22,7 +22,7 @@ export default defineConfig(({ mode }) => {
     configLoader: 'runner',
     // Only public identity is defined. No credential is ever reachable from here.
     define: { __SITE_CONFIG__: JSON.stringify(site) },
-    plugins: [react(), tailwindcss(), sitePlugin(site, customDomain), {
+    plugins: [react(), tailwindcss(), sitePlugin(site, customDomain, command === 'serve'), {
       name: 'celia-private-ai-api',
       configureServer(server) { server.middlewares.use(developmentApi(serverEnv)) },
       configurePreviewServer(server) { server.middlewares.use(developmentApi(serverEnv)) },

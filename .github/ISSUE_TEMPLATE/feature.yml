@@ -1,0 +1,30 @@
+name: أداة أو تحسين مقترح
+description: إضافة تستحق أن تُبنى
+labels: ['enhancement']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        كل أداة جديدة تُضاف بسطر تسجيل واحد في سجلين وتحتاج صفحات ووحدة خادم
+        واختبارًا. راجع `docs/SELF-MAINTAINING.md` قسم "إضافة أداة".
+  - type: input
+    id: problem
+    attributes:
+      label: المشكلة التي يحلّها
+      description: اكتب المشكلة لا الحل. ما الذي يتعذّر على المستخدم اليوم؟
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: هل يمكن تنفيذها محليًا بلا مزوّد AI؟
+      options: ['نعم، منطق حتمي', 'لا، تحتاج نموذجًا لغويًا', 'غير متأكد']
+    validations:
+      required: true
+  - type: textarea
+    id: limits
+    attributes:
+      label: حدود مقترحة
+      description: الحد الأقصى للمدخل، ماذا لا تفعله الأداة، وكيف يُمنع الإيهام بالقدرة؟
+    validations:
+      required: true
