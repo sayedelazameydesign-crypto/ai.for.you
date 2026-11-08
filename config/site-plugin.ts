@@ -13,8 +13,11 @@ export function sitePlugin(config: SiteConfig, customDomain: string): Plugin {
     name: 'celia-site-identity',
     transformIndexHtml(html) {
       const canonical = config.siteUrl ? `<link rel="canonical" href="${escapeHtml(config.siteUrl)}" />` : ''
+      // og:image must be absolute, so it is only emitted when a site URL is known.
+      // The card is PNG because most social scrapers ignore SVG.
+      const image = config.siteUrl ? new URL('og-image.png', config.siteUrl).href : ''
       const graph = config.siteUrl
-        ? `<meta property="og:type" content="website" />\n    <meta property="og:title" content="${escapeHtml(config.title)}" />\n    <meta property="og:description" content="${escapeHtml(config.description)}" />\n    <meta property="og:url" content="${escapeHtml(config.siteUrl)}" />\n    <meta property="og:locale" content="ar_AR" />\n    <meta name="twitter:card" content="summary" />`
+        ? `<meta property="og:type" content="website" />\n    <meta property="og:site_name" content="${escapeHtml(config.brandLatin)}" />\n    <meta property="og:title" content="${escapeHtml(config.title)}" />\n    <meta property="og:description" content="${escapeHtml(config.description)}" />\n    <meta property="og:url" content="${escapeHtml(config.siteUrl)}" />\n    <meta property="og:locale" content="ar_AR" />\n    <meta property="og:image" content="${escapeHtml(image)}" />\n    <meta property="og:image:width" content="1200" />\n    <meta property="og:image:height" content="630" />\n    <meta property="og:image:alt" content="${escapeHtml(config.brandLatin)}" />\n    <meta name="twitter:card" content="summary_large_image" />\n    <meta name="twitter:title" content="${escapeHtml(config.title)}" />\n    <meta name="twitter:description" content="${escapeHtml(config.description)}" />\n    <meta name="twitter:image" content="${escapeHtml(image)}" />`
         : ''
       return html
         .replaceAll('__TITLE__', escapeHtml(config.title))

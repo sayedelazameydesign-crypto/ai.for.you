@@ -4,11 +4,9 @@ import { ArrowLeft, Bookmark, Check, CheckCircle2, Copy, Download, LoaderCircle,
 import { useWorkspace } from '../hooks'
 import type { ToolId, ToolResult } from '../../shared/types'
 import { copyText, downloadText, resultToText } from '../lib/storage'
-import { site } from '../lib/site'
+import { BrandName } from './Brand'
 
-export function Brand({ small = false }: { small?: boolean }) {
-  return <span className={`brand ${small ? 'brand-small' : ''}`}><span className="brand-symbol"><Sparkles size={23} strokeWidth={1.7} /></span><span className="brand-name">{site.brandAr}<span className="brand-dot">.</span><span className="brand-english" dir="ltr">{site.brandLatin}</span></span></span>
-}
+export { Brand, BrandMark, Wordmark, BrandName } from './Brand'
 export function Modal({ title, children, onClose, className = '' }: { title: string; children: ReactNode; onClose: () => void; className?: string }) {
   const ref = useRef<HTMLDialogElement>(null)
   useEffect(() => {
@@ -54,7 +52,7 @@ export function SubmitButton({ busy, children, ai = false }: { busy: boolean; ch
   return <button type="submit" className="button button-primary generate-button" disabled={busy}>{busy ? <LoaderCircle size={19} className="animate-spin" /> : ai ? <Sparkles size={19} /> : <WandSparkles size={19} />}{busy ? 'نجهّز نتيجتك…' : children}<ArrowLeft size={17} className="submit-arrow" /></button>
 }
 export function EmptyResult({ icon, title, description }: { icon: ReactNode; title: string; description: string }) {
-  return <div className="empty-result"><div className="empty-result-icon">{icon}<span className="empty-sparkle"><Sparkles size={16} /></span></div><h3>{title}</h3><p>{description}</p><span className="tiny-label">فكرتك + أداة لك = بداية جميلة</span></div>
+  return <div className="empty-result"><div className="empty-result-icon">{icon}<span className="empty-sparkle"><Sparkles size={16} /></span></div><h3>{title}</h3><p>{description}</p><span className="tiny-label">فكرتك + <BrandName /> = بداية جميلة</span></div>
 }
 export function PageHeading({ eyebrow, title, description, action }: { eyebrow: string; title: string; description: string; action?: ReactNode }) {
   return <div className="page-heading"><div><div className="eyebrow"><span className="little-line" />{eyebrow}</div><h1>{title}</h1><p>{description}</p></div>{action}</div>
