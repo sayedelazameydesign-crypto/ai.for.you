@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ToolId, ToolInput, ToolResult } from '../../shared/types'
 import { useWorkspace } from '../hooks'
+import { apiUrl } from '../lib/site'
+import { ACCESS_HEADER } from '../../shared/contract'
 
 export function useGeneration<T extends ToolResult>(tool: ToolId, local: () => Promise<T> | T) {
   const { mode, aiAvailable, accessCode } = useWorkspace()
@@ -34,9 +36,9 @@ export function useGeneration<T extends ToolResult>(tool: ToolId, local: () => P
         const next = await local()
         if (mounted.current) setResult(next)
       } else {
-        const response = await fetch(new URL('api/ai', document.baseURI), {
+        const response = await fetch(apiUrl('ai'), {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Lek-Access': accessCode.trim() },
+          headers: { 'Content-Type': 'application/json', [ACCESS_HEADER]: accessCode.trim() },
           body: JSON.stringify({ tool, input, consent }),
           signal: controller.signal,
         })

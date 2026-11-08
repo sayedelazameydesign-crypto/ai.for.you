@@ -1,8 +1,6 @@
-import { Code2, FileText, WandSparkles } from 'lucide-react'
-import type { LucideIcon } from 'lucide-react'
+import type { ToolId } from '../../shared/tools'
+import { tools } from '../tools/index'
+import type { ToolModule } from '../tools/types'
 
-export const toolMeta: Record<'marketing' | 'summary' | 'code', { title: string; short: string; description: string; icon: LucideIcon; color: string; category: string }> = {
-  marketing: { title: 'مولّد المحتوى التسويقي', short: 'مولّد المحتوى', description: 'حوّل فكرتك إلى كلمات تلفت الانتباه، وتترك أثراً.', icon: WandSparkles, color: 'purple', category: 'كتابة وتسويق' },
-  summary: { title: 'ملخّص النصوص', short: 'ملخّص النصوص', description: 'من صفحات طويلة إلى أفكار واضحة. خذ معها الخلاصة.', icon: FileText, color: 'green', category: 'قراءة وفهم' },
-  code: { title: 'فاحص الأكواد', short: 'فاحص الأكواد', description: 'عين ثانية على كودك، لتكتشف التحسين قبل الخطأ.', icon: Code2, color: 'orange', category: 'برمجة وتطوير' },
-}
+/** Metadata view of the registry, kept for components that only need labels and icons. */
+export const toolMeta = Object.fromEntries(tools.map((tool) => [tool.id, tool])) as Record<ToolId, ToolModule>

@@ -1,6 +1,6 @@
 <div dir="rtl">
 
-# لك. — ai.for.you
+# لك. — celia.sh
 
 **أدوات صغيرة. إمكانات كبيرة.** مساحة عربية RTL تجمع ثلاث أدوات عملية في تطبيق واحد خفيف، مع وضع محلي يعمل دون حساب أو مفتاح API أو بطاقة ائتمان.
 
@@ -20,7 +20,7 @@
 
 ## ابدأ على جهازك
 
-المتطلبات: Node.js 22.12 أو أحدث، وnpm.
+المتطلبات: Node.js 22.12 أو أحدث (الإصدار المثبّت في `.nvmrc`)، وnpm. استخدم `nvm use` ليقرأ الملف تلقائياً.
 
 </div>
 
@@ -44,6 +44,7 @@ npm run build            # TypeScript + production build -> dist/
 npm run check            # lint + tests + build
 npm run preview          # Preview the production build
 npm run test:browser     # Real Chromium + accessibility checks (install browser first)
+npm run test:smoke -- URL # Post-deploy check of a published site
 npm audit --audit-level=high
 ```
 
@@ -55,8 +56,8 @@ npm audit --audit-level=high
 
 - المستودع الحالي عام. سير العمل `.github/workflows/ci.yml` يفحص المشروع على الفرع الحالي وعلى طلبات الدمج، وينشر بعد دمج التغيير في `main`.
 - فعّل **Settings → Pages → Build and deployment → Source → GitHub Actions** مرة واحدة. لا ترفع `node_modules` أو `dist` إلى Git؛ ملف ignore يستبعدهما.
-- المسارات النسبية وhash routing يدعمان عنوان المشروع الفرعي `/ai.for.you/`.
-- العنوان المتوقع بعد التفعيل والدمج والنشر: `https://sayedelazameydesign-crypto.github.io/ai.for.you/`. هذا عنوان متوقع، وليس ادعاءً بأن الموقع منشور قبل اكتمال سير العمل.
+- المسارات النسبية وhash routing يدعمان أي مسار فرعي أو نطاقاً مخصصاً. لا يوجد اسم مستودع مكتوب في كود التطبيق.
+- هوية الموقع (العنوان، canonical، رابط المستودع، `base`) تُحقن وقت البناء من سياق GitHub. راجع [docs/RENAMING.md](docs/RENAMING.md) لتغيير الاسم أو النطاق دون تعديل كود.
 - الأدوات المحلية تعمل على Pages. مسارات `/api/*` ليست وظائف خادم على Pages، لذلك يظهر وضع الذكاء الاصطناعي كغير مهيّأ.
 - تشغيلات runners القياسية في المستودعات العامة مجانية وفق سياسة GitHub وحصصها. راجع الفوترة إذا أصبح المستودع خاصاً.
 
@@ -66,7 +67,7 @@ npm audit --audit-level=high
 
 1. اربط المستودع نفسه بمشروع Vercel بإعداد **Vite**. يحدد `vercel.json` أمر البناء `npm run build` ومجلد الإخراج `dist`.
 2. أضف متغيرات البيئة التالية في إعدادات الخادم، ثم أعد النشر.
-3. اختبر `/api/status` وطلباً حقيقياً صغيراً، وراقب استهلاك الحصة قبل مشاركة الرابط.
+3. اختبر `/api/v1/status` وطلباً حقيقياً صغيراً، وراقب استهلاك الحصة قبل مشاركة الرابط. عقد API موثّق في [docs/API.md](docs/API.md).
 
 **تنبيه تجاري:** خطة Hobby للاستخدام الشخصي غير التجاري وفق سياسة Vercel. الإعلانات والروابط الربحية الأساسية وبيع الخدمات قد تستلزم خطة مدفوعة. طلب التبرعات وحده لا يقع ضمن الاستخدام التجاري في السياسة التي روجعت. المجانية لا تعني السماح التجاري بلا قيود.
 
@@ -81,6 +82,7 @@ GROQ_API_KEY=your_server_only_provider_key
 GROQ_MODEL=openai/gpt-oss-120b
 AI_ACCESS_CODE=your_random_application_access_code_12_chars_or_more
 AI_DAILY_LIMIT=40
+AI_ALLOWED_ORIGINS=
 ```
 
 <div dir="rtl">
@@ -88,10 +90,11 @@ AI_DAILY_LIMIT=40
 - `GROQ_API_KEY`: مفتاح المزوّد. يبقى على الخادم ويرسل فقط إلى عنوان Groq الثابت. **لا تستخدم بادئة `VITE_` ولا تضعه في الواجهة أو المستودع.**
 - `AI_ACCESS_CODE`: رمز مختلف عن مفتاح API، بطول 12–200 حرف. يحدده المالك ويشاركه مع المستخدمين المسموح لهم. تدخله الواجهة في الإعدادات ويحفظ في ذاكرة الجلسة فقط، لا localStorage. تتحقق الخادم من صحته عند إرسال طلب.
 - `GROQ_MODEL`: نموذج متاح لحسابك ويدعم JSON. تحقق من التوثيق والحصص؛ لا نفترض توفر نموذج أو حصة مجانية للجميع إلى الأبد.
+- `AI_ALLOWED_ORIGINS`: أصول مسموحة صراحةً إن كان الوسيط على نطاق مختلف، مفصولة بفواصل. فارغة تعني نفس الأصل فقط. CORS ليس حماية؛ رمز الوصول وحدود الطلبات هي الحماية.
 - `AI_DAILY_LIMIT`: سقف احترازي يومي لكل نسخة خادم عاملة، وحد ستة طلبات في الدقيقة لكل عميل. عدادات الذاكرة **ليست حصة موزعة أو نظام فوترة**؛ تُصفّر عند إعادة التشغيل وقد تتعدد عبر نسخ serverless. قبل فتح الخدمة للجمهور، أضف حصة مركزية ومراقبة ومصادقة مناسبة.
 - الطلب السحابي يحتاج موافقة صريحة على إرسال النص. لا ترسل المدخلات في الوضع المحلي. راجع سياسة المزوّد قبل إدخال معلومات حساسة.
 
-لا توجد مفاتيح حقيقية في المستودع. لم يُختبر اتصال Groq الحي لعدم وجود مفتاح مزوّد؛ اختبارات الخادم تستخدم اتصالاً وهمياً وتتحقق من المسار والترويسات والأخطاء والحدود.
+لا توجد مفاتيح حقيقية في المستودع. اختبار Groq الحي من GitHub Actions نجح بمفتاح المالك (`reason=ok`) بعد ضبط ميزانية الإكمال لنماذج الاستدلال. اختبارات الخادم في المستودع تستخدم اتصالاً وهمياً وتتحقق من المسار والترويسات والأخطاء والحدود. راجع [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 ## الخصوصية وحدود المجانية
 
@@ -116,22 +119,32 @@ AI_DAILY_LIMIT=40
 
 ```text
 src/
-  pages/          Dashboard, three tools, library, settings, guide
+  tools/          Tool registry: one entry per tool, drives nav/search/cards
+  pages/          Dashboard, tool pages, library, settings, guide
   components/     RTL shell, dialogs, result actions, original CSS hero art
   hooks/          Request lifecycle, cancellation and consent
-  lib/            Local engines, storage, downloads, tool metadata
-shared/types.ts   Shared client/server contracts
-server/           Server-only Groq adapter, validation, best-effort limits
-api/              Vercel Node function adapters
-tests/            Engines, UI workflows, server security and validation
-.github/workflows CI, production build, GitHub Pages deployment
+  lib/            Local engines, storage, downloads, resolved site identity
+shared/           Tool ids, versioned API contract, hosting identity
+server/
+  tools/          Per-tool validation, prompt and post-processing
+  providers/      Provider adapters (Groq today), swappable server-side
+  ai.ts           Generic proxy: limits, validation, error mapping
+api/v1/           Versioned Vercel Node function adapters
+build/            Build-time identity injection and CNAME emission
+scripts/          Post-deploy smoke test, repository secret guard
+tests/            Engines, UI workflows, server security, hosting identity
+.github/workflows CI, deploy, post-deploy verification, live Groq smoke
 ```
 
 <div dir="rtl">
 
 التقنيات: React 19، TypeScript، Vite، Tailwind CSS 4، Lucide، Babel parser، Vitest وTesting Library. الخطان IBM Plex Sans Arabic وManrope يأتيان عبر Fontsource ويحتفظ كل منهما بترخيصه. رخصة كود المشروع: MIT.
 
-راجع [SECURITY.md](SECURITY.md) للحدود الأمنية وطريقة الإبلاغ عن الثغرات، و[docs/QUALITY.md](docs/QUALITY.md) لتفاصيل الاختبارات وقائمة ما قبل الإطلاق، و[docs/OPERATIONS.md](docs/OPERATIONS.md) لتدوير المفاتيح واختبار Groq الحي من GitHub Actions. لتشغيل اختبارات المتصفح لأول مرة: `npx playwright install chromium`.
+### كيف تضيف أداة دون تعديل النواة
+
+أضف المعرّف في `shared/tools.ts`، أنشئ وحدة في `server/tools/` وصفحة في `src/pages/`، ثم سجّل كلاً منهما بسطر واحد في سجلّي الأدوات. التنقل والبحث والتوجيه وبطاقات الرئيسية ومرشّحات المكتبة مشتقة من السجل تلقائياً. التفاصيل في [docs/API.md](docs/API.md).
+
+راجع [SECURITY.md](SECURITY.md) للحدود الأمنية وطريقة الإبلاغ عن الثغرات، و[docs/QUALITY.md](docs/QUALITY.md) لتفاصيل الاختبارات وقائمة ما قبل الإطلاق، و[docs/OPERATIONS.md](docs/OPERATIONS.md) لتدوير المفاتيح واختبار Groq الحي، و[docs/API.md](docs/API.md) لعقد API، و[docs/RENAMING.md](docs/RENAMING.md) لتغيير الاسم أو النطاق. لتشغيل اختبارات المتصفح لأول مرة: `npx playwright install chromium`.
 
 ## مراجع رسمية تمت مراجعتها في 8 نوفمبر 2026
 
@@ -139,6 +152,8 @@ tests/            Engines, UI workflows, server security and validation
 - [إعداد مصدر نشر GitHub Pages](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site)
 - [سياسة الاستخدام التجاري لدى Vercel](https://vercel.com/docs/limits/fair-use-guidelines#commercial-usage)
 - [حدود طلبات Groq](https://console.groq.com/docs/rate-limits)
+- [إعادة تسمية مستودع وما يتحول تلقائياً](https://docs.github.com/en/repositories/creating-and-managing-repositories/renaming-a-repository)
+- [حدود GitHub Pages والاستخدام التجاري](https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits)
 
 قد تتغير هذه السياسات؛ راجعها قبل النشر التجاري أو شراء حصة.
 

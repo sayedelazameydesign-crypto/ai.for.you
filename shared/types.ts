@@ -1,4 +1,5 @@
-export type ToolId = 'marketing' | 'summary' | 'code'
+import type { ToolId } from './tools'
+export type { ToolId } from './tools'
 export type Language = 'ar' | 'en'
 export type EngineMode = 'local' | 'ai'
 export type Platform = 'instagram' | 'linkedin' | 'x'

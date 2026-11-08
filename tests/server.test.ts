@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { completionBudget, handleRequest, isConfigured, validateRequest } from '../server/ai'
+import { completionBudget, handleRequest, isConfigured, validateRequest, type AIEnvironment } from '../server/ai'
 import { marketingExample } from '../src/lib/marketing'
 import { summaryExample } from '../src/lib/summary'
 
@@ -10,7 +10,8 @@ function request(body: unknown = { tool: 'marketing', input: marketingExample, c
 }
 function config(result: unknown, fetcher = vi.fn<typeof fetch>(async () => Response.json({ choices: [{ message: { content: JSON.stringify(result) } }] }))) {
   time += 61000
-  return { env: { ...env }, fetcher, now: () => time }
+  const scoped: AIEnvironment = { ...env }
+  return { env: scoped, fetcher, now: () => time, sleep: async () => {} }
 }
 const marketingResult = { variants: [{ id: 'v1', label: 'قصة', text: 'نبتة لمن يحب النباتات.' }] }
 
@@ -127,5 +128,80 @@ describe('server-only AI configuration', () => {
     setup.env.AI_DAILY_LIMIT = '1'
     expect((await handleRequest(request(), setup, `daily-a-${time}`)).status).toBe(200)
     expect((await handleRequest(request(), setup, `daily-b-${time}`)).status).toBe(429)
+  })
+})
+
+describe('versioned contract and proxy boundaries', () => {
+  const ok = () => vi.fn<typeof fetch>(async () => Response.json({ choices: [{ message: { content: JSON.stringify(marketingResult) } }] }))
+  it('serves both the versioned and legacy paths and advertises the version', async () => {
+    for (const path of ['/api/v1/status', '/api/status']) {
+      const response = await handleRequest(new Request(`https://example.test${path}`), { env })
+      expect(response.status).toBe(200)
+      expect(response.headers.get('x-api-version')).toBe('v1')
+    }
+    const versioned = await handleRequest(new Request('https://example.test/api/v1/ai', { method: 'POST', headers: { 'content-type': 'application/json', 'x-lek-access': env.AI_ACCESS_CODE }, body: JSON.stringify({ tool: 'marketing', input: marketingExample, consent: true }) }), config(marketingResult, ok()))
+    expect(versioned.status).toBe(200)
+  })
+  it('returns a contract error for an unknown path', async () => {
+    const response = await handleRequest(new Request('https://example.test/api/v2/ai'), { env })
+    expect(response.status).toBe(404)
+    expect((await response.json()).error.code).toBe('method')
+  })
+  it('rejects a cross-origin caller until the origin is explicitly allowlisted', async () => {
+    const setup = config(marketingResult, ok())
+    const caller = { origin: 'https://owner.github.io', 'sec-fetch-site': 'cross-site' }
+    expect((await handleRequest(request(undefined, caller), setup)).status).toBe(403)
+    setup.env.AI_ALLOWED_ORIGINS = 'https://owner.github.io'
+    const allowed = await handleRequest(request(undefined, caller), setup)
+    expect(allowed.status).toBe(200)
+    expect(allowed.headers.get('access-control-allow-origin')).toBe('https://owner.github.io')
+    expect(allowed.headers.get('vary')).toBe('Origin')
+  })
+  it('never reflects an unlisted origin and still requires the access code', async () => {
+    const setup = config(marketingResult, ok())
+    setup.env.AI_ALLOWED_ORIGINS = 'https://owner.github.io'
+    const response = await handleRequest(request(undefined, { origin: 'https://evil.test' }), setup)
+    expect(response.status).toBe(403)
+    expect(response.headers.get('access-control-allow-origin')).toBeNull()
+    const noCode = await handleRequest(request(undefined, { origin: 'https://owner.github.io', 'x-lek-access': 'wrong' }), setup)
+    expect(noCode.status).toBe(401)
+  })
+  it('answers preflight only for allowlisted origins and ignores malformed entries', async () => {
+    const setup = config(marketingResult, ok())
+    setup.env.AI_ALLOWED_ORIGINS = 'https://owner.github.io, not-an-origin , javascript:alert(1)'
+    const preflight = await handleRequest(new Request('https://example.test/api/v1/ai', { method: 'OPTIONS', headers: { origin: 'https://owner.github.io' } }), setup)
+    expect(preflight.status).toBe(204)
+    expect(preflight.headers.get('access-control-allow-origin')).toBe('https://owner.github.io')
+    const denied = await handleRequest(new Request('https://example.test/api/v1/ai', { method: 'OPTIONS', headers: { origin: 'https://evil.test' } }), setup)
+    expect(denied.status).toBe(403)
+  })
+  it('retries a transient provider limit once and then succeeds', async () => {
+    let calls = 0
+    const fetcher = vi.fn<typeof fetch>(async () => {
+      calls++
+      return calls === 1
+        ? new Response('busy', { status: 429, headers: { 'retry-after': '1' } })
+        : Response.json({ choices: [{ message: { content: JSON.stringify(marketingResult) } }] })
+    })
+    const response = await handleRequest(request(), config(marketingResult, fetcher))
+    expect(response.status).toBe(200)
+    expect(fetcher).toHaveBeenCalledTimes(2)
+  })
+  it('caps the completion budget and honours a valid daily ceiling only', async () => {
+    const setup = config(marketingResult, ok())
+    setup.env.AI_MAX_TOKENS = '999999'
+    expect((await handleRequest(request(), setup)).status).toBe(200)
+    expect(JSON.parse(String(setup.fetcher.mock.calls[0][1]?.body)).max_completion_tokens).toBe(4096)
+    const tuned = config(marketingResult, ok())
+    tuned.env.AI_MAX_TOKENS = '2048'
+    await handleRequest(request(), tuned)
+    expect(JSON.parse(String(tuned.fetcher.mock.calls[0][1]?.body)).max_completion_tokens).toBe(2048)
+  })
+  it('falls back to the default provider when an unknown one is configured', async () => {
+    const setup = config(marketingResult, ok())
+    setup.env.AI_PROVIDER = 'does-not-exist'
+    const response = await handleRequest(request(), setup)
+    expect(response.status).toBe(200)
+    expect(setup.fetcher.mock.calls[0][0]).toBe('https://api.groq.com/openai/v1/chat/completions')
   })
 })

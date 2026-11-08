@@ -3,19 +3,20 @@ import type { ReactNode } from 'react'
 import { ArrowUpLeft, BookOpen, Bookmark, ChevronLeft, Command, House, Menu, Moon, Search, Settings2, ShieldCheck, Sparkles, Sun, X, ArrowLeft, CircleHelp } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useWorkspace } from '../hooks'
-import { toolMeta } from '../lib/tools'
+import { tools } from '../tools/index'
+import { site } from '../lib/site'
 import type { Route } from '../workspace'
+import type { ToolId } from '../../shared/tools'
 import { Brand, Modal } from './ui'
 
-const navTools = Object.entries(toolMeta) as ['marketing' | 'summary' | 'code', typeof toolMeta.marketing][]
-const pageNames: Record<Route, string> = { home: 'نظرة عامة', marketing: 'مولّد المحتوى', summary: 'ملخّص النصوص', code: 'فاحص الأكواد', saved: 'المكتبة', settings: 'الإعدادات', guide: 'دليل البداية' }
+const pageNames: Record<Route, string> = { home: 'نظرة عامة', saved: 'المكتبة', settings: 'الإعدادات', guide: 'دليل البداية', ...Object.fromEntries(tools.map((tool) => [tool.id, tool.short])) as Record<ToolId, string> }
 
 function SearchDialog({ onClose }: { onClose: () => void }) {
   const [query, setQuery] = useState('')
   const { navigate } = useWorkspace()
   const options: { route: Route; label: string; icon: LucideIcon; keywords: string }[] = [
     { route: 'home', label: 'نظرة عامة', icon: House, keywords: 'الرئيسية dashboard home' },
-    ...navTools.map(([route, tool]) => ({ route, label: tool.title, icon: tool.icon, keywords: tool.description + route })),
+    ...tools.map((tool) => ({ route: tool.id as Route, label: tool.title, icon: tool.icon, keywords: `${tool.description} ${tool.id}` })),
     { route: 'saved', label: 'النتائج المحفوظة', icon: Bookmark, keywords: 'مكتبتي saved library' },
     { route: 'settings', label: 'الإعدادات والخصوصية', icon: Settings2, keywords: 'الوضع الداكن ذكاء اصطناعي API' },
     { route: 'guide', label: 'دليل البداية والنشر', icon: BookOpen, keywords: 'مساعدة مجاني deployment help' },
@@ -82,14 +83,14 @@ export function Layout({ children }: { children: ReactNode }) {
     <a href="#main-content" className="skip-link" onClick={(event) => { event.preventDefault(); document.getElementById('main-content')?.focus() }}>تجاوز إلى المحتوى</a>
     {mobileOpen && <button className="sidebar-backdrop" onClick={closeMobile} aria-label="إغلاق القائمة" />}
     <aside ref={sidebarRef} inert={mobile && !mobileOpen} role={mobile && mobileOpen ? 'dialog' : undefined} aria-modal={mobile && mobileOpen ? true : undefined} className={`sidebar ${mobileOpen ? 'sidebar-open' : ''}`} aria-label="القائمة الرئيسية">
-      <div className="sidebar-brand"><button onClick={() => go('home')} aria-label="لك — الصفحة الرئيسية"><Brand /></button><button className="icon-button mobile-close" onClick={closeMobile} aria-label="إغلاق القائمة"><X size={20} /></button></div>
+      <div className="sidebar-brand"><button onClick={() => go('home')} aria-label={`${site.brandAr} — الصفحة الرئيسية`}><Brand /></button><button className="icon-button mobile-close" onClick={closeMobile} aria-label="إغلاق القائمة"><X size={20} /></button></div>
       <div className="workspace-label"><span className="workspace-avatar"><Sparkles size={17} /></span><div><strong>مساحتك الشخصية</strong><span>صغيرة بالأدوات، كبيرة بالأثر</span></div><span className="workspace-free">مجاني</span></div>
       <nav className="sidebar-nav"><span className="nav-section-label">مساحة العمل</span><button className={`nav-item ${route === 'home' ? 'active' : ''}`} onClick={() => go('home')} aria-current={route === 'home' ? 'page' : undefined}><House size={19} /><span>نظرة عامة</span>{route === 'home' && <span className="active-nav-dot" />}</button>
         <span className="nav-section-label tools-label">أدواتك الذكية</span>
-        {navTools.map(([key, tool]) => <button key={key} className={`nav-item ${route === key ? 'active' : ''}`} onClick={() => go(key)} aria-current={route === key ? 'page' : undefined}><tool.icon size={19} /><span>{tool.short}</span><span className={`tool-nav-dot ${tool.color}`} /></button>)}
+        {tools.map((tool) => <button key={tool.id} className={`nav-item ${route === tool.id ? 'active' : ''}`} onClick={() => go(tool.id)} aria-current={route === tool.id ? 'page' : undefined}><tool.icon size={19} /><span>{tool.short}</span><span className={`tool-nav-dot ${tool.color}`} /></button>)}
         <div className="nav-divider" /><button className={`nav-item ${route === 'saved' ? 'active' : ''}`} onClick={() => go('saved')} aria-current={route === 'saved' ? 'page' : undefined}><Bookmark size={19} /><span>النتائج المحفوظة</span><span className="nav-count">{saved.length.toLocaleString('ar-EG')}</span></button>
       </nav>
-      <div className="sidebar-bottom"><div className="sidebar-note"><span className="note-sparkle"><Sparkles size={23} strokeWidth={1.5} /></span><h3>فكرتك تستحق أن تبدأ.</h3><p>لا تحتاج إلى خبرة.<br />فقط فكرة، والباقي نكتشفه معاً.</p><button onClick={() => go('guide')}>تعرّف على لك <ArrowUpLeft size={16} /></button><span className="note-orbit" /></div>
+      <div className="sidebar-bottom"><div className="sidebar-note"><span className="note-sparkle"><Sparkles size={23} strokeWidth={1.5} /></span><h3>فكرتك تستحق أن تبدأ.</h3><p>لا تحتاج إلى خبرة.<br />فقط فكرة، والباقي نكتشفه معاً.</p><button onClick={() => go('guide')}>تعرّف على {site.brandAr} <ArrowUpLeft size={16} /></button><span className="note-orbit" /></div>
         <button className={`nav-item ${route === 'guide' ? 'active' : ''}`} onClick={() => go('guide')} aria-current={route === 'guide' ? 'page' : undefined}><CircleHelp size={18} /><span>دليل البداية</span><ArrowUpLeft size={14} className="nav-end-icon" /></button>
         <button className={`nav-item ${route === 'settings' ? 'active' : ''}`} onClick={() => go('settings')} aria-current={route === 'settings' ? 'page' : undefined}><Settings2 size={18} /><span>الإعدادات</span></button>
         <div className="sidebar-status"><span className="status-dot" /><span>أدواتك المحلية جاهزة دائماً</span><ShieldCheck size={14} /></div>
@@ -97,7 +98,7 @@ export function Layout({ children }: { children: ReactNode }) {
     </aside>
     <div className="main-shell" inert={mobile && mobileOpen}><header className="topbar"><div className="breadcrumb"><button className="icon-button mobile-menu" onClick={() => setMobileOpen(true)} aria-label="فتح القائمة" aria-expanded={mobileOpen}><Menu size={22} /></button><span className="breadcrumb-home">مساحة العمل</span><ChevronLeft size={14} /><strong>{pageNames[route]}</strong></div><div className="topbar-actions"><button className="search-trigger" onClick={() => setSearchOpen(true)}><Search size={17} /><span>ابحث عن أي شيء...</span><kbd>⌘ K</kbd></button><span className="topbar-divider" /><button className="icon-button theme-button" onClick={toggleTheme} aria-label={theme === 'light' ? 'تفعيل الوضع الداكن' : 'تفعيل الوضع الفاتح'} title={theme === 'light' ? 'الوضع الداكن' : 'الوضع الفاتح'}>{theme === 'light' ? <Moon size={19} /> : <Sun size={19} />}</button><button className="profile-button" onClick={() => go('settings')} aria-label="إعدادات مساحتك الشخصية">ص<span /></button></div></header>
       <main id="main-content" tabIndex={-1} className="main-content">{children}</main>
-      <footer className="app-footer"><span>صُنع ليمنح أفكارك مساحة أكبر.</span><div><span className="footer-mode"><span className="status-dot" />{aiAvailable ? 'الوضعان المحلي والسحابي متاحان' : 'وضع محلي · خصوصية أولاً'}</span><a href="https://github.com/sayedelazameydesign-crypto/ai.for.you" target="_blank" rel="noreferrer">المشروع مفتوح المصدر <ArrowUpLeft size={13} /></a><span dir="ltr" className="version">v0.1</span></div></footer>
+      <footer className="app-footer"><span>صُنع ليمنح أفكارك مساحة أكبر.</span><div><span className="footer-mode"><span className="status-dot" />{aiAvailable ? 'الوضعان المحلي والسحابي متاحان' : 'وضع محلي · خصوصية أولاً'}</span><a href={site.repoUrl} target="_blank" rel="noreferrer">المشروع مفتوح المصدر <ArrowUpLeft size={13} /></a><span dir="ltr" className="version">v0.1</span></div></footer>
     </div>
     {searchOpen && <SearchDialog onClose={() => setSearchOpen(false)} />}
   </div>
