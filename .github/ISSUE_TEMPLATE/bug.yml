@@ -1,0 +1,43 @@
+name: خلل
+description: شيء يعمل على خلاف المتوقع
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **لا تُدرج أسرارًا أو مفاتيح أو نصًا خاصًا في هذه التذكرة.**
+        للثغرات الأمنية استخدم قناة `SECURITY.md` الخاصة، لا تذكرة عامة.
+  - type: dropdown
+    id: area
+    attributes:
+      label: المجال
+      options: [مولّد المحتوى, ملخّص النصوص, فاحص الأكواد, المكتبة, الإعدادات, وضع الذكاء الاصطناعي, النشر, آخر]
+    validations:
+      required: true
+  - type: input
+    id: where
+    attributes:
+      label: أين ظهر؟
+      description: رابط الصفحة المنشورة، أو "محليًا" مع الأمر المستخدم.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: خطوات الإعادة
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: المتوقع مقابل الفعلي
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: تأكيدات
+      options:
+        - label: جرّبت الوضع المحلي أيضًا (هل يتكرر بلا وضع AI؟)
+        - label: لا يحتوي هذا البلاغ على أسرار أو بيانات شخصية
+          required: true

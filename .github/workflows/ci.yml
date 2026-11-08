@@ -25,7 +25,13 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+      # Measured thresholds, not a target: a real coverage drop fails here.
+      - name: Tests with enforced coverage thresholds
+        run: npm run test:coverage
       - run: npm audit --audit-level=high
+      # A document that no longer matches the code is a quiet lie. Fail early.
+      - name: Reject documentation drift
+        run: npm run check:docs
       - name: Reject committed secrets and client-side key prefixes
         run: node scripts/guard-secrets.mjs
       - run: npx playwright install --with-deps chromium

@@ -6,6 +6,7 @@ import { isRecord } from './tools/types.ts'
 import { serverTools } from './tools/index.ts'
 import { defaultProvider, providers } from './providers/index.ts'
 import type { Provider } from './providers/types.ts'
+import { recordMetric, type MetricsSink } from './metrics.ts'
 
 export { completionBudget } from './providers/groq.ts'
 
@@ -24,6 +25,8 @@ export interface ServerConfig {
   fetcher?: typeof fetch
   now?: () => number
   sleep?: (ms: number) => Promise<void>
+  /** Where the one-line, content-free request metric goes. Defaults to console.log. */
+  metrics?: MetricsSink
 }
 
 const MAX_BODY = 64000
@@ -131,6 +134,47 @@ function endpointOf(pathname: string): 'status' | 'ai' | null {
 }
 
 export async function handleRequest(request: Request, config: ServerConfig, client = 'unknown'): Promise<Response> {
+  const startedAt = Date.now()
+  const meta: RequestMeta = {}
+  const response = await routeRequest(request, config, client, meta)
+  // One content-free line per AI request. Only the AI endpoint emits metrics:
+  // the status probe is polled by uptime checks and would drown the signal.
+  if (endpointOf(new URL(request.url).pathname) === 'ai') {
+    const code = await peekErrorCode(response)
+    recordMetric({
+      outcome: code === 'ok' ? 'ok' : FAILED_CODES.has(code) ? 'failed' : 'rejected',
+      code,
+      tool: meta.tool,
+      status: response.status,
+      startedAt,
+    }, config.metrics)
+  }
+  return response
+}
+
+/** Server-side faults: the operator must act, unlike a rejected client request. */
+const FAILED_CODES = new Set<string>([
+  'timeout', 'provider', 'provider-auth', 'provider-limit', 'provider-request', 'output', 'model', 'not-configured',
+])
+
+/** Read the error code without consuming the client's body. */
+async function peekErrorCode(response: Response): Promise<ErrorCode | 'ok'> {
+  if (!response.ok) {
+    try {
+      const clone = response.clone()
+      const payload = await clone.json() as { error?: { code?: string } }
+      const code = payload?.error?.code
+      if (typeof code === 'string' && /^[a-z-]{2,32}$/.test(code)) return code as ErrorCode
+    } catch { /* fall through to the status-derived code */ }
+    return response.status >= 500 ? 'provider' : 'input'
+  }
+  return 'ok'
+}
+
+/** Filled during routing so the metric can name the tool without re-reading the body. */
+interface RequestMeta { tool?: string }
+
+async function routeRequest(request: Request, config: ServerConfig, client: string, meta: RequestMeta): Promise<Response> {
   const { env } = config
   const url = new URL(request.url)
   const endpoint = endpointOf(url.pathname)
@@ -169,6 +213,7 @@ export async function handleRequest(request: Request, config: ServerConfig, clie
   let body: unknown
   try { body = JSON.parse(await readBounded(request)) }
   catch (error) { return failure(error instanceof Error && error.message === 'body-too-large' ? 413 : 400, 'body', 'الطلب غير صالح أو يتجاوز الحجم المسموح.', cors) }
+  if (isRecord(body) && typeof body.tool === 'string') meta.tool = body.tool
   if (!validateRequest(body)) return failure(400, 'input', 'راجع الحقول والحدود: النص حتى 12,000 حرف للوضع السحابي، ويجب الموافقة على إرساله.', cors)
   const model = env.GROQ_MODEL?.trim() || provider.defaultModel
   if (!/^[\w./-]{1,120}$/.test(model)) return failure(503, 'model', 'إعداد اسم النموذج غير صالح.', cors)

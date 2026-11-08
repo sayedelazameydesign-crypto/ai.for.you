@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: ثغرة أمنية
+    url: https://github.com/sayedelazameydesign-crypto/celia.sh/security/advisories/new
+    about: لا تفتح تذكرة عامة لثغرة. استخدم القناة الخاصة وفق SECURITY.md.
