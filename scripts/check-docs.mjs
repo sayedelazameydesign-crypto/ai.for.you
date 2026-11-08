@@ -89,7 +89,12 @@ for (const code of new Set(codes)) {
 /* 4. The maintenance document must not claim unverified work --------------- */
 
 const maint = read('docs/SELF-MAINTAINING.md')
-if (!/##\s*.*الإثبات/.test(maint)) fail('missing_evidence_section', 'docs/SELF-MAINTAINING.md needs an evidence table')
+// The maintenance doc must publish measurable evidence, not only intentions.
+// Either an explicit evidence section or the PASS/FAIL/NOT RUN report table.
+if (!/##\s*.*(?:الإثبات|القياس)/.test(maint)) {
+  fail('missing_evidence_section', 'docs/SELF-MAINTAINING.md needs an evidence or measurement section')
+}
+if (!/NOT RUN/.test(maint)) fail('missing_third_state', 'docs/SELF-MAINTAINING.md must document the NOT RUN state')
 // A standalone placeholder line, not an inline mention of the rule itself.
 if (/^[ \t]*(?:TODO|TBD|FIXME)\b/m.test(maint)) fail('placeholder_text', 'docs/SELF-MAINTAINING.md has an unfinished placeholder line')
 

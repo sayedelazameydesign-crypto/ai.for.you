@@ -34,6 +34,9 @@ jobs:
         run: npm run check:docs
       - name: Reject committed secrets and client-side key prefixes
         run: node scripts/guard-secrets.mjs
+      # The maintenance agent's safety claims are asserted, not documented.
+      - name: Prove the maintenance agent guards hold
+        run: node scripts/agent-guards.mjs
       - run: npx playwright install --with-deps chromium
       - run: npm run test:browser
       # The deploy job rebuilds with the hosting identity of the target, so this

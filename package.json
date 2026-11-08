@@ -19,6 +19,9 @@
     "test:smoke": "node scripts/smoke-deploy.mjs",
     "check:build": "node scripts/check-build.mjs",
     "check:docs": "node scripts/check-docs.mjs",
+    "report:maintenance": "node scripts/maintenance-report.mjs",
+    "agent:guards": "node scripts/agent-guards.mjs",
+    "agent:dry": "node scripts/maintenance-agent.mjs --dry-run",
     "render:og": "node scripts/render-og-image.mjs"
   },
   "dependencies": {
