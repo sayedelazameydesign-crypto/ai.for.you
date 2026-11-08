@@ -30,16 +30,45 @@ jobs:
           GROQ_MODEL: ${{ github.event.inputs.model || vars.GROQ_MODEL || 'openai/gpt-oss-120b' }}
         run: |
           node --input-type=module <<'JS'
+          import { appendFileSync } from 'node:fs'
+
+          // Report a machine-readable reason code. Never print the key, the
+          // resolved model value, or any provider response body.
+          const report = (ok, reason, hint = '') => {
+            console.log(`groq_smoke=${ok ? 'passed' : 'failed'} reason=${reason}`)
+            const summaryPath = process.env.GITHUB_STEP_SUMMARY
+            if (summaryPath) {
+              const lines = [
+                '## Groq live smoke',
+                '',
+                `- result: **${ok ? 'passed' : 'failed'}**`,
+                `- reason: \`${reason}\``,
+              ]
+              if (hint) lines.push(`- next step: ${hint}`)
+              appendFileSync(summaryPath, lines.join('\n') + '\n')
+            }
+            if (!ok) {
+              console.log(`::error title=Groq smoke failed::reason=${reason}${hint ? ' - ' + hint : ''}`)
+              process.exit(1)
+            }
+          }
+
           const key = process.env.GROQ_API_KEY?.trim()
           if (!key) {
-            console.error('GROQ_API_KEY secret is missing. Add it in repository Actions secrets.')
-            process.exit(1)
+            report(false, 'missing_secret', 'Add GROQ_API_KEY under Settings > Secrets and variables > Actions.')
           }
 
           const model = process.env.GROQ_MODEL?.trim() || 'openai/gpt-oss-120b'
           if (!/^[\w./-]{1,120}$/.test(model)) {
-            console.error('Invalid GROQ_MODEL value.')
-            process.exit(1)
+            report(false, 'invalid_model', 'GROQ_MODEL may only contain letters, digits, dot, slash, underscore or dash.')
+          }
+
+          const httpHint = (status) => {
+            if (status === 401 || status === 403) return 'The provider rejected the key. Check that it is valid and active.'
+            if (status === 404) return 'The model was not found or is not enabled for this account.'
+            if (status === 429) return 'Provider rate limit or quota reached. Retry later or review the account limits.'
+            if (status >= 500) return 'The provider reported a server error. Retry later.'
+            return 'Check the key, model, quota, and provider status.'
           }
 
           try {
@@ -64,40 +93,34 @@ jobs:
 
             console.log(`provider_status=${response.status}`)
             if (!response.ok) {
-              console.error('Groq smoke request failed. Check the key, model, quota, and provider status.')
-              process.exit(1)
+              report(false, `provider_http_${response.status}`, httpHint(response.status))
             }
 
             let payload
             try {
               payload = await response.json()
             } catch {
-              console.error('Groq returned an invalid JSON envelope.')
-              process.exit(1)
+              report(false, 'invalid_envelope', 'The provider returned a body that is not JSON.')
             }
 
             const content = payload?.choices?.[0]?.message?.content
             if (typeof content !== 'string') {
-              console.error('Groq returned no message content.')
-              process.exit(1)
+              report(false, 'no_content', 'The provider returned no message content.')
             }
 
             let result
             try {
               result = JSON.parse(content)
             } catch {
-              console.error('Groq message content was not valid JSON.')
-              process.exit(1)
+              report(false, 'invalid_json_content', 'The model did not return valid JSON. Try a model that supports JSON mode.')
             }
 
             if (result?.ok !== true) {
-              console.error('Groq smoke response did not match the expected shape.')
-              process.exit(1)
+              report(false, 'unexpected_shape', 'The model returned JSON that does not match the expected shape.')
             }
 
-            console.log('groq_smoke=passed')
+            report(true, 'ok')
           } catch {
-            console.error('Groq smoke request timed out or could not reach the provider.')
-            process.exit(1)
+            report(false, 'network_or_timeout', 'The request timed out or the provider could not be reached.')
           }
           JS
