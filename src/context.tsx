@@ -1,4 +1,6 @@
 import { useCallback, useRef, useState, useEffect } from 'react'
+import { flushSync } from 'react-dom'
+import { canViewTransition } from './hooks/useMotion'
 import type { ReactNode } from 'react'
 import type { EngineMode, SavedItem, ToolId, ToolResult } from '../shared/types'
 import { MAX_SAVED_ITEMS, persistSaved, readSaved, resultToText } from './lib/storage'
@@ -17,9 +19,19 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [mode, setMode] = useState<EngineMode>('local')
   useEffect(() => {
     const update = () => {
-      setRoute(currentRoute())
-      window.scrollTo({ top: 0, behavior: 'instant' })
-      requestAnimationFrame(() => document.getElementById('main-content')?.focus({ preventScroll: true }))
+      const apply = () => {
+        setRoute(currentRoute())
+        window.scrollTo({ top: 0, behavior: 'instant' })
+        requestAnimationFrame(() => document.getElementById('main-content')?.focus({ preventScroll: true }))
+      }
+      // Native cross-fade between routes where available. The callback must stay
+      // synchronous: React flushes inside it so the browser captures the new state.
+      if (canViewTransition()) {
+        const transition = (document as Document & { startViewTransition: (cb: () => void) => { finished: Promise<void> } }).startViewTransition(() => flushSync(apply))
+        // A rejected transition (e.g. skipped by a newer navigation) must not surface
+        // as an unhandled rejection.
+        void transition.finished.catch(() => {})
+      } else apply()
     }
     window.addEventListener('hashchange', update)
     return () => window.removeEventListener('hashchange', update)

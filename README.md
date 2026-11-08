@@ -147,7 +147,9 @@ tests/            Engines, UI workflows, server security, hosting identity
 
 راجع [SECURITY.md](SECURITY.md) للحدود الأمنية وطريقة الإبلاغ عن الثغرات، و[docs/QUALITY.md](docs/QUALITY.md) لتفاصيل الاختبارات وقائمة ما قبل الإطلاق، و[docs/OPERATIONS.md](docs/OPERATIONS.md) لتدوير المفاتيح واختبار Groq الحي، و[docs/API.md](docs/API.md) لعقد API، و[docs/RENAMING.md](docs/RENAMING.md) لتغيير الاسم أو النطاق (نُفّذت التسمية إلى `celia.sh` في 8 نوفمبر 2026)، و[docs/FREE-TIERS.md](docs/FREE-TIERS.md) للحصص المجانية المتحقَّق منها بالأرقام ومصادرها.
 
-الهوية البصرية وطبقة الموشن وقواعد التباين موثّقة في [docs/DESIGN.md](docs/DESIGN.md). لتشغيل اختبارات المتصفح لأول مرة: `npx playwright install chromium`.
+الهوية البصرية وطبقة الموشن وقواعد التباين موثّقة في [docs/DESIGN.md](docs/DESIGN.md).
+
+تدقيق سمات 2026 مقابل الكود فعلياً — ما طُبّق وما رُفض ولماذا — في [docs/FRONTEND-2026.md](docs/FRONTEND-2026.md). لتشغيل اختبارات المتصفح لأول مرة: `npx playwright install chromium`.
 
 ## مراجع رسمية تمت مراجعتها في 8 نوفمبر 2026
 
