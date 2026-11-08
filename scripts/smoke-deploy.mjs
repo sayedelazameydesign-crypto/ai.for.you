@@ -40,14 +40,27 @@ async function probe(url, validate) {
   return { ok: false, reason, status: 0, attempt: ATTEMPTS }
 }
 
+// After a repository rename or a domain move, a stale canonical is the failure
+// that nobody notices: the page still loads, but search engines and social
+// previews point at the old address. Compare it with the URL actually served.
+const normalize = (value) => { try { return new URL(value).href.replace(/\/$/, '') } catch { return '' } }
+let canonical = ''
+let canonicalState = 'absent'
+
 const page = await probe(siteUrl, (body) => {
   if (!/<div id="root"><\/div>/.test(body)) return 'missing_root'
   if (!/<html[^>]+dir="rtl"/.test(body)) return 'missing_rtl'
   if (/__(TITLE|DESCRIPTION|THEME_COLOR)__/.test(body)) return 'unreplaced_placeholder'
   if (!/<script[^>]+type="module"/.test(body)) return 'missing_bundle'
+  const match = /<link[^>]+rel="canonical"[^>]+href="([^"]+)"/.exec(body)
+  canonical = match ? match[1] : ''
+  canonicalState = !canonical ? 'absent' : normalize(canonical) === normalize(siteUrl) ? 'match' : 'mismatch'
+  if (process.env.SMOKE_STRICT_IDENTITY === '1' && canonicalState !== 'match') return `canonical_${canonicalState}`
   return ''
 })
 console.log(`page_status=${page.status} page=${page.ok ? 'passed' : 'failed'} reason=${page.reason} attempts=${page.attempt}`)
+// Report the URL only; it is public identity, not a secret.
+console.log(`canonical=${canonicalState}${canonicalState === 'mismatch' ? ` expected=${normalize(siteUrl)} found=${normalize(canonical)}` : ''}`)
 
 let api = { ok: true, reason: 'skipped', status: 0, attempt: 0 }
 if (apiBase) {
