@@ -31,9 +31,11 @@ export function sitePlugin(config: SiteConfig, customDomain: string, dev = false
       // dist/ is protected wherever it is served.
       const meta = [
         `<meta http-equiv="Content-Security-Policy" content="${escapeHtml(metaContentSecurityPolicy({ apiBase: config.apiBase, dev }))}" />`,
-        ...Object.entries(SECURITY_HEADERS)
-          .filter(([name]) => name !== 'Permissions-Policy')
-          .map(([name, value]) => `<meta http-equiv="${name}" content="${escapeHtml(value)}" />`),
+        // Only the two directives a meta tag actually supports. X-Frame-Options
+        // and Permissions-Policy are ignored as meta, so shipping them there
+        // would be decoration; they are sent as real headers on Vercel.
+        ...['X-Content-Type-Options', 'Referrer-Policy'].map((name) =>
+          `<meta http-equiv="${name}" content="${escapeHtml(SECURITY_HEADERS[name as keyof typeof SECURITY_HEADERS])}" />`),
       ].join('\n    ')
       return html
         .replace('<!-- security-headers -->', meta)

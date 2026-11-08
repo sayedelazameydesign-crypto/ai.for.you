@@ -126,6 +126,10 @@ test('content security policy is enforced without breaking assets, fonts or the 
   expect(fontsLoaded).toBe(true)
 
   const collected = await page.evaluate(() => (window as unknown as { __cspViolations?: string[] }).__cspViolations ?? [])
+  // Print the evidence before asserting, so a CI failure names the directive.
+  if (violations.length || collected.length || failedRequests.length) {
+    console.log('CSP_EVIDENCE', JSON.stringify({ violations, collected, failedRequests }))
+  }
   expect([...violations, ...collected]).toEqual([])
   // A blocked asset shows up as a failed request; none is acceptable.
   expect(failedRequests.filter((url) => !url.startsWith('data:'))).toEqual([])
