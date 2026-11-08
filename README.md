@@ -131,7 +131,7 @@ tests/            Engines, UI workflows, server security and validation
 
 التقنيات: React 19، TypeScript، Vite، Tailwind CSS 4، Lucide، Babel parser، Vitest وTesting Library. الخطان IBM Plex Sans Arabic وManrope يأتيان عبر Fontsource ويحتفظ كل منهما بترخيصه. رخصة كود المشروع: MIT.
 
-راجع [SECURITY.md](SECURITY.md) للحدود الأمنية وطريقة الإبلاغ عن الثغرات، و[docs/QUALITY.md](docs/QUALITY.md) لتفاصيل الاختبارات وقائمة ما قبل الإطلاق. لتشغيل اختبارات المتصفح لأول مرة: `npx playwright install chromium`.
+راجع [SECURITY.md](SECURITY.md) للحدود الأمنية وطريقة الإبلاغ عن الثغرات، و[docs/QUALITY.md](docs/QUALITY.md) لتفاصيل الاختبارات وقائمة ما قبل الإطلاق، و[docs/OPERATIONS.md](docs/OPERATIONS.md) لتدوير المفاتيح واختبار Groq الحي من GitHub Actions. لتشغيل اختبارات المتصفح لأول مرة: `npx playwright install chromium`.
 
 ## مراجع رسمية تمت مراجعتها في 8 نوفمبر 2026
 
