@@ -84,8 +84,14 @@ jobs:
                   { role: 'system', content: 'Return only valid JSON. Do not include markdown.' },
                   { role: 'user', content: 'Reply with exactly this JSON object: {"ok":true}' },
                 ],
-                temperature: 0,
-                max_completion_tokens: 32,
+                temperature: 0.5,
+                // Reasoning models spend hidden reasoning tokens from this same
+                // budget. A tiny cap makes Groq abort JSON mode with HTTP 400
+                // (json_validate_failed), so leave headroom.
+                max_completion_tokens: 1024,
+                ...(/^openai\/gpt-oss-/i.test(model)
+                  ? { reasoning_effort: 'low', include_reasoning: false }
+                  : {}),
                 response_format: { type: 'json_object' },
               }),
               signal: AbortSignal.timeout(20000),
@@ -93,7 +99,21 @@ jobs:
 
             console.log(`provider_status=${response.status}`)
             if (!response.ok) {
-              report(false, `provider_http_${response.status}`, httpHint(response.status))
+              // Read only the provider's structured error identifiers. Never
+              // print the message, the request, or the raw body.
+              let code = ''
+              try {
+                const err = (await response.json())?.error
+                for (const candidate of [err?.code, err?.type]) {
+                  if (typeof candidate === 'string' && /^[\w.-]{1,64}$/.test(candidate)) {
+                    code = `_${candidate}`
+                    break
+                  }
+                }
+              } catch {
+                // Non-JSON error body: fall back to the status code alone.
+              }
+              report(false, `provider_http_${response.status}${code}`, httpHint(response.status))
             }
 
             let payload

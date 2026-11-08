@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { handleRequest, isConfigured, validateRequest } from '../server/ai'
+import { completionBudget, handleRequest, isConfigured, validateRequest } from '../server/ai'
 import { marketingExample } from '../src/lib/marketing'
 import { summaryExample } from '../src/lib/summary'
 
@@ -75,6 +75,28 @@ describe('server-only AI configuration', () => {
     const { result } = await response.json()
     expect(result.stats.reduction).toBe(99)
     expect(result.stats.words).toBeGreaterThan(100)
+  })
+  it('leaves room for reasoning tokens so JSON mode is not aborted upstream', async () => {
+    const setup = config(marketingResult)
+    expect((await handleRequest(request(), setup)).status).toBe(200)
+    const sent = JSON.parse(String(setup.fetcher.mock.calls[0][1]?.body))
+    expect(sent.max_completion_tokens).toBeGreaterThanOrEqual(4096)
+    expect(sent.reasoning_effort).toBe('low')
+    expect(sent.include_reasoning).toBe(false)
+  })
+  it('only sends gpt-oss reasoning fields to gpt-oss models', () => {
+    expect(completionBudget('openai/gpt-oss-120b')).toEqual({ max_completion_tokens: 4096, reasoning_effort: 'low', include_reasoning: false })
+    expect(completionBudget('openai/gpt-oss-20b')).toHaveProperty('reasoning_effort', 'low')
+    expect(completionBudget('llama-3.3-70b-versatile')).toEqual({ max_completion_tokens: 4096 })
+    expect(completionBudget('qwen/qwen3-32b')).not.toHaveProperty('include_reasoning')
+  })
+  it('maps a rejected provider request to an actionable owner-facing error', async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => Response.json({ error: { message: 'upstream detail', code: 'json_validate_failed' } }, { status: 400 }))
+    const response = await handleRequest(request(), config({}, fetcher))
+    expect(response.status).toBe(502)
+    const payload = await response.json()
+    expect(payload.error.code).toBe('provider-request')
+    expect(JSON.stringify(payload)).not.toContain('upstream detail')
   })
   it('rejects malformed provider output', async () => {
     const response = await handleRequest(request(), config({ variants: 'not an array' }))
