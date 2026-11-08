@@ -81,6 +81,18 @@ function promptFor(request: AIRequest): string {
   return common + `Review this ${input.language} code statically. Explain findings in ${/[\u0600-\u06FF]/.test(input.code) ? 'Arabic' : 'English'}. Do not claim to execute code or perform a complete security audit. For TypeScript distinguish syntax from type checking. Only offer JSON formatting or trailing-whitespace cleanup as formatted output, never semantic rewrites. Input: ${JSON.stringify(input.code)}. Schema: {"diagnostics":[{"line":1,"column":1,"severity":"error|warning|info","message":"finding","rule":"short-rule-id"}],"suggestions":["actionable advice"],"note":"scope and limitations"}. Omit formatted unless certain it is behavior-preserving.`
 }
 
+// Reasoning models spend hidden reasoning tokens from the same completion
+// budget. Too small a budget makes Groq abort JSON mode with HTTP 400
+// (json_validate_failed) before any document is produced, so keep headroom and
+// ask gpt-oss for low reasoning effort. These fields are gpt-oss specific and
+// are not sent to other models, which could reject them.
+export function completionBudget(model: string): Record<string, unknown> {
+  const base = { max_completion_tokens: 4096 }
+  return /^openai\/gpt-oss-/i.test(model)
+    ? { ...base, reasoning_effort: 'low', include_reasoning: false }
+    : base
+}
+
 function validateResult(tool: AIRequest['tool'], value: unknown): value is ToolResult {
   if (!isRecord(value)) return false
   if (tool === 'marketing') return Array.isArray(value.variants) && value.variants.length > 0 && value.variants.length <= 5 && value.variants.every((item) => isRecord(item) && string(item.id, 80, 1) && string(item.label, 100, 1) && string(item.text, 4000, 1))
@@ -116,13 +128,14 @@ export async function handleRequest(request: Request, config: ServerConfig, clie
     const response = await (config.fetcher ?? fetch)('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: { Authorization: `Bearer ${env.GROQ_API_KEY!.trim()}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, messages: [{ role: 'system', content: promptFor(body) }, { role: 'user', content: JSON.stringify(body.input) }], temperature: 0.5, max_completion_tokens: 2000, response_format: { type: 'json_object' } }),
+      body: JSON.stringify({ model, messages: [{ role: 'system', content: promptFor(body) }, { role: 'user', content: JSON.stringify(body.input) }], temperature: 0.5, ...completionBudget(model), response_format: { type: 'json_object' } }),
       signal: AbortSignal.timeout(24000),
     })
     if (!response.ok) {
       // Do not log prompt content, credentials, or upstream response bodies.
       if (response.status === 429) return failure(429, 'provider-limit', 'بلغ مزوّد الذكاء الاصطناعي حد الحصة. جرّب لاحقاً أو استخدم الوضع المحلي.', { 'Retry-After': response.headers.get('retry-after') || '60' })
       if (response.status === 401 || response.status === 403) return failure(503, 'provider-auth', 'مفتاح المزوّد يحتاج إلى مراجعة من مالك الخادم.')
+      if (response.status === 400 || response.status === 404) return failure(502, 'provider-request', 'رفض المزوّد إعدادات الطلب. راجع اسم النموذج وميزانية الإكمال في إعدادات الخادم.')
       return failure(502, 'provider', 'لم يكتمل طلب الذكاء الاصطناعي. الوضع المحلي لا يزال متاحاً.')
     }
     const payload: unknown = await response.json()
