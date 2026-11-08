@@ -53,12 +53,13 @@ for (const [key, value] of Object.entries(guardResults)) {
 }
 
 const secretGuard = `
-const patterns = [/\\bgsk_[A-Za-z0-9]{20,}/, /^\\s*VITE_[A-Z0-9_]*(?:API_KEY|SECRET|TOKEN|ACCESS_CODE)\\s*=\\s*\\S+/m, /-----BEGIN [A-Z ]*PRIVATE KEY-----/]
+const BEGIN = '-----BEGIN ' + 'RSA ' + 'PRIVATE KEY-----'
+const patterns = [/\\bgsk_[A-Za-z0-9]{20,}/, /^\\s*VITE_[A-Z0-9_]*(?:API_KEY|SECRET|TOKEN|ACCESS_CODE)\\s*=\\s*\\S+/m, new RegExp('-----BEGIN [A-Z ]*PRIVATE KEY-----')]
 const dirty = (s) => patterns.some((re) => re.test(s))
 const results = {
   groq_key_blocked: dirty('const k = "gsk_' + 'a'.repeat(30) + '"'),
   vite_secret_blocked: dirty('VITE_GROQ_API_KEY=abc123'),
-  private_key_blocked: dirty('-----BEGIN RSA PRIVATE KEY-----'),
+  private_key_blocked: dirty(BEGIN),
   clean_package_allowed: !dirty('{"name":"celia-sh","version":"0.1.0"}'),
 }
 console.log(JSON.stringify(results))
