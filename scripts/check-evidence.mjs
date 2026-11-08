@@ -20,7 +20,7 @@
  *   node scripts/check-evidence.mjs          # cheap checks only
  *   node scripts/check-evidence.mjs --full   # also runs the suites
  */
-import { execFileSync, spawnSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 
 const FULL = process.argv.includes('--full')
@@ -40,7 +40,7 @@ const measurements = {
   /** Unit and integration test count, from the runner itself. */
   'tests:unit': () => {
     if (!FULL) return null
-    const result = run('npx', ['vitest', 'run', '--reporter=json', '--outputFile=/tmp/vitest.json'])
+    run('npx', ['vitest', 'run', '--reporter=json', '--outputFile=/tmp/vitest.json'])
     if (!existsSync('/tmp/vitest.json')) return null
     try {
       const data = JSON.parse(readFileSync('/tmp/vitest.json', 'utf8'))
