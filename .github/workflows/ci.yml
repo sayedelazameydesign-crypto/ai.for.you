@@ -32,6 +32,9 @@ jobs:
       # A document that no longer matches the code is a quiet lie. Fail early.
       - name: Reject documentation drift
         run: npm run check:docs
+      # The quota schema is not executed here; its security properties are.
+      - name: Assert quota schema security properties
+        run: npm run check:sql
       - name: Reject committed secrets and client-side key prefixes
         run: node scripts/guard-secrets.mjs
       # The maintenance agent's safety claims are asserted, not documented.

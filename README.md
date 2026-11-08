@@ -147,6 +147,8 @@ tests/            Engines, UI workflows, server security, hosting identity
 
 راجع [SECURITY.md](SECURITY.md) للحدود الأمنية وطريقة الإبلاغ عن الثغرات، و[docs/QUALITY.md](docs/QUALITY.md) لتفاصيل الاختبارات وقائمة ما قبل الإطلاق، و[docs/OPERATIONS.md](docs/OPERATIONS.md) لتدوير المفاتيح واختبار Groq الحي، و[docs/API.md](docs/API.md) لعقد API، و[docs/RENAMING.md](docs/RENAMING.md) لتغيير الاسم أو النطاق (نُفّذت التسمية إلى `celia.sh` في 8 نوفمبر 2026)، و[docs/FREE-TIERS.md](docs/FREE-TIERS.md) للحصص المجانية المتحقَّق منها بالأرقام ومصادرها.
 
+مسار الدخل وحساب التكلفة ومخطط الحصص في [docs/REVENUE.md](docs/REVENUE.md): الأداة المحلية تبقى مجانية دائمًا، والمُباع هو الحصة السحابية فقط. اقتصاد الوحدة يُحسب من ثوابت الكود عبر `npm run economics`.
+
 الصيانة الذاتية موثّقة كمواصفة قابلة للتحقق في [docs/SELF-MAINTAINING.md](docs/SELF-MAINTAINING.md): ستة مجالات (اختبارات، اعتماديات، جودة، توثيق، صحة تشغيلية، تعافي) ودورة `Observe → Diagnose → Propose → Validate → Approve → Apply → Verify`، مع حالة صريحة `done/partial/planned` وإثبات لكل بند. الأوامر التشغيلية في [docs/RUNBOOK.md](docs/RUNBOOK.md)، والتغييرات في [CHANGELOG.md](CHANGELOG.md).
 
 الهوية البصرية وطبقة الموشن وقواعد التباين موثّقة في [docs/DESIGN.md](docs/DESIGN.md).

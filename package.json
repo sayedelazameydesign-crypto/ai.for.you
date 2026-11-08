@@ -19,6 +19,8 @@
     "test:smoke": "node scripts/smoke-deploy.mjs",
     "check:build": "node scripts/check-build.mjs",
     "check:docs": "node scripts/check-docs.mjs",
+    "check:sql": "node scripts/check-sql.mjs",
+    "economics": "node scripts/unit-economics.mjs",
     "report:maintenance": "node scripts/maintenance-report.mjs",
     "agent:guards": "node scripts/agent-guards.mjs",
     "agent:dry": "node scripts/maintenance-agent.mjs --dry-run",
