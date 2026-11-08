@@ -8,7 +8,7 @@ export default tseslint.config(
   { ignores: ['dist', 'coverage', 'node_modules', 'playwright-report', 'test-results'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
-  { files: ['**/*.{js,ts,tsx}'], languageOptions: { globals: { ...globals.browser, ...globals.node } } },
+  { files: ['**/*.{js,mjs,cjs,ts,tsx}'], languageOptions: { globals: { ...globals.browser, ...globals.node } } },
   {
     files: ['src/**/*.{ts,tsx}'],
     plugins: { 'react-hooks': reactHooks, 'react-refresh': reactRefresh },

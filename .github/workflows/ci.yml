@@ -2,7 +2,7 @@ name: Check and deploy
 
 on:
   push:
-    branches: [main, 'arena/3cfeb370-ai-for-you']
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -10,28 +10,32 @@ permissions:
   contents: read
 
 concurrency:
-  group: pages-${{ github.ref }}
-  cancel-in-progress: false
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   quality:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: '22'
+          node-version-file: .nvmrc
           cache: npm
       - run: npm ci
       - run: npm run check
       - run: npm audit --audit-level=high
+      - name: Reject committed secrets and client-side key prefixes
+        run: node scripts/guard-secrets.mjs
       - run: npx playwright install --with-deps chromium
       - run: npm run test:browser
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: site
-          path: dist
+          name: site-source
+          path: |
+            dist
+            .nvmrc
           retention-days: 3
           if-no-files-found: error
 
@@ -39,7 +43,7 @@ jobs:
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     needs: quality
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
       contents: read
       pages: write
@@ -47,15 +51,54 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: pages-production
+      cancel-in-progress: false
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          name: site
-          path: dist
-      - uses: actions/configure-pages@v6
-      - uses: actions/upload-pages-artifact@v5
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Build with the identity of this repository
+        env:
+          # Derived from the live GitHub context: a rename needs no code change.
+          VITE_REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+          VITE_SITE_URL: ${{ vars.SITE_URL || format('https://{0}.github.io/{1}/', github.repository_owner, github.event.repository.name) }}
+          VITE_API_BASE: ${{ vars.API_BASE }}
+          VITE_BRAND_AR: ${{ vars.BRAND_AR }}
+          VITE_BRAND_LATIN: ${{ vars.BRAND_LATIN }}
+          SITE_BASE: ${{ vars.SITE_BASE }}
+          SITE_CNAME: ${{ vars.SITE_CNAME }}
+        run: npm run build
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:
           path: dist
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5
+
+  verify:
+    needs: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: .nvmrc
+      - name: Smoke test the published site
+        env:
+          PAGE_URL: ${{ needs.deploy.outputs.page_url }}
+          API_BASE: ${{ vars.API_BASE }}
+        run: |
+          node scripts/smoke-deploy.mjs "$PAGE_URL" "$API_BASE" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Report a failed deployment
+        if: failure()
+        run: |
+          echo "::error::Deployment smoke test failed. Re-run the last known-good commit from Actions to roll back."
+          echo "Rollback: git revert the offending merge, or re-run the previous successful deploy run." >> "$GITHUB_STEP_SUMMARY"

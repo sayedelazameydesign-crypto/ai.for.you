@@ -4,9 +4,10 @@ import { ArrowLeft, Bookmark, Check, CheckCircle2, Copy, Download, LoaderCircle,
 import { useWorkspace } from '../hooks'
 import type { ToolId, ToolResult } from '../../shared/types'
 import { copyText, downloadText, resultToText } from '../lib/storage'
+import { site } from '../lib/site'
 
 export function Brand({ small = false }: { small?: boolean }) {
-  return <span className={`brand ${small ? 'brand-small' : ''}`}><span className="brand-symbol"><Sparkles size={23} strokeWidth={1.7} /></span><span className="brand-name">لك<span className="brand-dot">.</span><span className="brand-english" dir="ltr">ai.for.you</span></span></span>
+  return <span className={`brand ${small ? 'brand-small' : ''}`}><span className="brand-symbol"><Sparkles size={23} strokeWidth={1.7} /></span><span className="brand-name">{site.brandAr}<span className="brand-dot">.</span><span className="brand-english" dir="ltr">{site.brandLatin}</span></span></span>
 }
 export function Modal({ title, children, onClose, className = '' }: { title: string; children: ReactNode; onClose: () => void; className?: string }) {
   const ref = useRef<HTMLDialogElement>(null)

@@ -8,6 +8,8 @@ npm run check
 npm audit --audit-level=high
 npx playwright install chromium
 npm run test:browser
+node scripts/guard-secrets.mjs
+npm run test:smoke -- <published-url> [api-base]
 ```
 
 In a minimal Linux container, an existing Chromium executable can be supplied with `PLAYWRIGHT_CHROMIUM_EXECUTABLE`. Its system libraries must also be installed. The browser suite starts Vite automatically, or reuses a local server on port 5173.
@@ -21,12 +23,17 @@ Coverage includes:
 - Server-only secrets, access code, consent, origin checks, bounded bodies, provider error mapping, per-client and daily ceilings.
 - Real Chromium desktop/mobile workflows, theme persistence, deep links, keyboard focus and no horizontal overflow.
 - axe-core WCAG A/AA automated checks on all seven core pages in light and dark themes.
+- Hosting identity resolved from the environment: repository rename, custom domain, rejected non-http schemes, CNAME and base normalization.
+- Both tool registries stay in sync with the shared id list.
+- Versioned `/api/v1` routing, explicit origin allowlist, preflight handling, one bounded provider retry, and token-budget clamping.
+- A post-deploy smoke test that requests the published page and the status endpoint.
 
 Automated accessibility checks do not replace manual assistive-technology testing. Syntax checking does not replace TypeScript type checking, unit tests in user code, or security review.
 
 ## Before a public launch
 
-- Merge reviewed changes into `main`, enable GitHub Pages Actions publishing, and confirm the actual deployment URL.
+- Merge reviewed changes into `main`, enable GitHub Pages Actions publishing, and confirm the actual deployment URL. The `verify` job must pass.
+- After a repository rename or domain change, confirm the new URL, update `AI_ALLOWED_ORIGINS` on any separate proxy, and relink Vercel/Cloudflare projects.
 - For cloud mode, configure server secrets and verify a live Groq request using a non-sensitive prompt. Mocked tests are not live-provider verification.
 - Confirm current provider quotas, country availability, data terms, and hosting commercial-use terms.
 - Replace the shared access gate with authentication and centralized durable quotas before offering a public paid service.

@@ -1,5 +1,5 @@
 {
-  "name": "ai-for-you",
+  "name": "celia-sh",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -14,7 +14,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "check": "npm run lint && npm run test && npm run build",
-    "test:browser": "playwright test"
+    "test:browser": "playwright test",
+    "test:smoke": "node scripts/smoke-deploy.mjs"
   },
   "dependencies": {
     "@babel/parser": "8.1.0",

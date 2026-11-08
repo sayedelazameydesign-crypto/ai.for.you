@@ -1,4 +1,5 @@
 import type { SavedItem } from '../../shared/types'
+import { isToolId } from '../../shared/tools'
 
 export const STORAGE_KEY = 'lek.saved.v1'
 export const MAX_SAVED_ITEMS = 50
@@ -11,7 +12,7 @@ export function parseSaved(raw: string | null): SavedItem[] {
     return value.filter((item): item is SavedItem => Boolean(item) && typeof item === 'object' &&
       typeof item.id === 'string' && typeof item.title === 'string' && typeof item.content === 'string' &&
       typeof item.createdAt === 'string' && Number.isFinite(Date.parse(item.createdAt)) &&
-      ['marketing', 'summary', 'code'].includes(item.tool) && ['local', 'ai'].includes(item.mode)).slice(0, MAX_SAVED_ITEMS)
+      isToolId(item.tool) && ['local', 'ai'].includes(item.mode)).slice(0, MAX_SAVED_ITEMS)
   } catch { return [] }
 }
 

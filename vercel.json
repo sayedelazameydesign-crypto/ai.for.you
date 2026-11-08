@@ -2,7 +2,10 @@
   "framework": "vite",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
-  "functions": { "api/ai.ts": { "maxDuration": 30 } },
+  "functions": {
+    "api/ai.ts": { "maxDuration": 30 },
+    "api/v1/ai.ts": { "maxDuration": 30 }
+  },
   "headers": [
     {
       "source": "/(.*)",

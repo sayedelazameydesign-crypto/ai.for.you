@@ -2,6 +2,7 @@ import { useCallback, useRef, useState, useEffect } from 'react'
 import type { ReactNode } from 'react'
 import type { EngineMode, SavedItem, ToolId, ToolResult } from '../shared/types'
 import { MAX_SAVED_ITEMS, persistSaved, readSaved, resultToText } from './lib/storage'
+import { apiUrl } from './lib/site'
 import { currentRoute, WorkspaceContext } from './workspace'
 import type { Route, Workspace } from './workspace'
 
@@ -27,7 +28,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     let active = true
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 5000)
-    fetch(new URL('api/status', document.baseURI), { signal: controller.signal })
+    fetch(apiUrl('status'), { signal: controller.signal })
       .then(async (response) => {
         if (!response.ok || !response.headers.get('content-type')?.includes('application/json')) return { configured: false }
         return await response.json() as { configured?: boolean }
