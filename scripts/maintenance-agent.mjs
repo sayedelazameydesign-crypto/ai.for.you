@@ -138,23 +138,37 @@ const majorOf = (version) => String(version ?? '').split('.')[0]
 
 const routine = []
 const majors = []
+const satisfied = []
+
+// Classification must be exhaustive: every outdated package lands in exactly one
+// bucket and is printed. An earlier version `continue`d when the wanted version
+// already matched the installed one, which silently dropped a major available
+// only outside the declared range — `typescript` 5.9.3 with wanted 5.9.3 and
+// latest 7.0.2 vanished from the report while the docs said majors are recorded.
 for (const [name, info] of Object.entries(parsed)) {
-  const { current, latest, wanted } = info ?? {}
+  const { current, wanted } = info ?? {}
   if (!semver.test(current ?? '')) continue
-  const target = wanted ?? latest
-  // Nothing to do when the range already resolves to the installed version.
-  // Reporting that as an update would be a false positive in the proposal.
-  if (target === current) continue
-  if (majorOf(current) === majorOf(target)) routine.push([name, info])
-  else majors.push([name, info])
+  if (majorOf(current) !== majorOf(wanted ?? current)) {
+    // A major that npm would install inside the declared range is still human work.
+    majors.push([name, info])
+    continue
+  }
+  if ((wanted ?? current) === current) {
+    // Range already satisfied. The package is behind, but not upgradable without
+    // a deliberate range change, so it is reported, not acted on.
+    satisfied.push([name, info])
+    continue
+  }
+  routine.push([name, info])
 }
 
-log(`agent=observe branch=${branch} outdated_total=${Object.keys(parsed).length} routine=${routine.length} major_skipped=${majors.length}`)
+log(`agent=observe branch=${branch} outdated_total=${Object.keys(parsed).length} routine=${routine.length} major_skipped=${majors.length} range_satisfied=${satisfied.length}`)
 for (const [name, info] of routine) log(`  routine ${name}: ${info.current} -> ${info.wanted ?? info.latest}`)
 for (const [name, info] of majors) log(`  major_skipped ${name}: ${info.current} -> ${info.latest} (human decision)`)
+for (const [name, info] of satisfied) log(`  range_satisfied ${name}: ${info.current} (latest ${info.latest}, needs a range change)`)
 
 if (!routine.length) {
-  log('agent=noop reason=no_routine_updates_available')
+  log(`agent=noop reason=no_routine_updates_available major_skipped=${majors.length} range_satisfied=${satisfied.length}`)
   done(0)
 }
 

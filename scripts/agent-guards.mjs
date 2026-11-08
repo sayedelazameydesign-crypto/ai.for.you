@@ -72,6 +72,43 @@ for (const [key, value] of Object.entries(secretResults)) {
   check(`secret guard: ${key.replace(/_/g, ' ')}`, value === true, value === true ? 'blocked as required' : 'GUARD FAILED')
 }
 
+// Classification completeness: every outdated package must land in exactly one
+// reported bucket. The bug this pins: a package whose `wanted` already equals
+// `current` (a major exists only outside the declared range) was skipped by
+// `continue` and appeared in no bucket at all.
+{
+  const classify = `
+const semver = /^\\d+\\.\\d+\\.\\d+/
+const majorOf = (v) => String(v ?? '').split('.')[0]
+const parsed = {
+  routinePkg: { current: '1.2.3', wanted: '1.2.5', latest: '1.2.5' },
+  majorPkg:   { current: '5.9.3', wanted: '6.0.0', latest: '6.0.0' },
+  rangePkg:   { current: '5.9.3', wanted: '5.9.3', latest: '7.0.2' },
+  nonSemver:  { current: 'workspace:*', wanted: 'x', latest: 'y' },
+}
+const buckets = []
+for (const [name, info] of Object.entries(parsed)) {
+  const { current, latest, wanted } = info ?? {}
+  if (!semver.test(current ?? '')) continue
+  if (majorOf(current) !== majorOf(wanted ?? current)) { buckets.push(name + ':major'); continue }
+  if ((wanted ?? current) === current) { buckets.push(name + ':satisfied'); continue }
+  buckets.push(name + ':routine')
+}
+console.log(JSON.stringify(buckets))
+`
+  const result = spawnSync('node', ['--input-type=module', '-e', classify], { encoding: 'utf8' })
+  const buckets = (() => {
+    try { return JSON.parse(result.stdout.trim()) } catch { return [] }
+  })()
+  check('classifies routine, major and range-satisfied separately',
+    buckets.includes('routinePkg:routine') && buckets.includes('majorPkg:major') && buckets.includes('rangePkg:satisfied'),
+    buckets.join(',') || 'no buckets')
+  check('never drops a semver package without a bucket',
+    buckets.filter((b) => b.startsWith('rangePkg')).length === 1 && !buckets.some((b) => b.startsWith('nonSemver')),
+    'rangePkg present once, non-semver excluded')
+}
+
+
 const failed = cases.filter((entry) => !entry.pass)
 for (const entry of cases) console.log(`${entry.pass ? 'PASS' : 'FAIL'}  ${entry.name}${entry.detail ? `  (${entry.detail})` : ''}`)
 console.log(`agent_guards=${failed.length ? 'failed' : 'passed'} checks=${cases.length}`)
