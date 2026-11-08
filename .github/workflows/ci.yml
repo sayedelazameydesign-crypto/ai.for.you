@@ -92,6 +92,8 @@ jobs:
         env:
           PAGE_URL: ${{ needs.deploy.outputs.page_url }}
           API_BASE: ${{ vars.API_BASE }}
+          # A rename or domain move must not leave a stale canonical behind.
+          SMOKE_STRICT_IDENTITY: '1'
         run: |
           node scripts/smoke-deploy.mjs "$PAGE_URL" "$API_BASE" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Report a failed deployment

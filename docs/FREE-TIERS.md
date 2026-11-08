@@ -101,6 +101,7 @@
 | `timeout-minutes` على كل مهمة | ✅ |
 | `permissions:` بأقل صلاحية | ✅ |
 | لا artifacts بلا مستهلك | ✅ بعد إزالة artifact غير المستخدم |
+| فحص ما بعد النشر يطابق canonical مع العنوان المخدوم | ✅ `SMOKE_STRICT_IDENTITY=1` في مهمة `verify` |
 | Dependabot لتحديث actions المثبّتة بـ SHA | ✅ `.github/dependabot.yml` |
 | اختبار Groq الحي يدوي فقط، بلا `schedule` | ✅ لا يستهلك حصة دورياً |
 

@@ -145,7 +145,7 @@ tests/            Engines, UI workflows, server security, hosting identity
 
 أضف المعرّف في `shared/tools.ts`، أنشئ وحدة في `server/tools/` وصفحة في `src/pages/`، ثم سجّل كلاً منهما بسطر واحد في سجلّي الأدوات. التنقل والبحث والتوجيه وبطاقات الرئيسية ومرشّحات المكتبة مشتقة من السجل تلقائياً. التفاصيل في [docs/API.md](docs/API.md).
 
-راجع [SECURITY.md](SECURITY.md) للحدود الأمنية وطريقة الإبلاغ عن الثغرات، و[docs/QUALITY.md](docs/QUALITY.md) لتفاصيل الاختبارات وقائمة ما قبل الإطلاق، و[docs/OPERATIONS.md](docs/OPERATIONS.md) لتدوير المفاتيح واختبار Groq الحي، و[docs/API.md](docs/API.md) لعقد API، و[docs/RENAMING.md](docs/RENAMING.md) لتغيير الاسم أو النطاق، و[docs/FREE-TIERS.md](docs/FREE-TIERS.md) للحصص المجانية المتحقَّق منها بالأرقام ومصادرها. لتشغيل اختبارات المتصفح لأول مرة: `npx playwright install chromium`.
+راجع [SECURITY.md](SECURITY.md) للحدود الأمنية وطريقة الإبلاغ عن الثغرات، و[docs/QUALITY.md](docs/QUALITY.md) لتفاصيل الاختبارات وقائمة ما قبل الإطلاق، و[docs/OPERATIONS.md](docs/OPERATIONS.md) لتدوير المفاتيح واختبار Groq الحي، و[docs/API.md](docs/API.md) لعقد API، و[docs/RENAMING.md](docs/RENAMING.md) لتغيير الاسم أو النطاق (نُفّذت التسمية إلى `celia.sh` في 8 نوفمبر 2026)، و[docs/FREE-TIERS.md](docs/FREE-TIERS.md) للحصص المجانية المتحقَّق منها بالأرقام ومصادرها. لتشغيل اختبارات المتصفح لأول مرة: `npx playwright install chromium`.
 
 ## مراجع رسمية تمت مراجعتها في 8 نوفمبر 2026
 
