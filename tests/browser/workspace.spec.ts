@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { extname, join, normalize, resolve } from 'node:path'
 import { test, expect } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
+import { buildThreeCodeSnippet } from '../../src/lib/space3d'
 
 test('dashboard, local generation, persistence, copy and download work in a real browser', async ({ page, context }) => {
   const errors: string[] = []
@@ -479,5 +480,151 @@ test('Three.js runtime suspends RAF when paused, reuses a single WebGL context w
   expect(exportVerify.geometriesAtMount).toBe(16)
   expect(exportVerify.frameAtMount).toBe(1)
   expect(exportVerify.frameAfterIdle).toBe(1)
+  expect(errors).toEqual([])
+})
+
+test('exported Three.js module loaded in a hidden tab with reduced motion paints one static frame on visibility restore without starting RAF or leaking GPU memory', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', (error) => errors.push(error.message))
+
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.setViewportSize({ width: 1280, height: 800 })
+
+  const autoRotateSnippet = buildThreeCodeSnippet({
+    model: 'sneaker',
+    swatch: 'violet',
+    material: 'glass',
+    autoRotate: true,
+  })
+  const threeModuleJs = readFileSync('node_modules/three/build/three.module.js', 'utf8')
+  const threeCoreJs = readFileSync('node_modules/three/build/three.core.js', 'utf8')
+
+  await page.route(/^https:\/\/three-export-sandbox\.example\//, async (route) => {
+    const pathname = new URL(route.request().url()).pathname
+    if (pathname === '/hidden-tab.html') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'text/html; charset=utf-8',
+        body: [
+          '<!doctype html><html><head>',
+          '<script>',
+          'window.__hiddenState = true;',
+          'window.__rafCount = 0;',
+          'const __origRaf = window.requestAnimationFrame.bind(window);',
+          'window.requestAnimationFrame = (cb) => { window.__rafCount += 1; return __origRaf(cb); };',
+          'Object.defineProperty(document, "hidden", { configurable: true, get: () => window.__hiddenState });',
+          'Object.defineProperty(document, "visibilityState", { configurable: true, get: () => (window.__hiddenState ? "hidden" : "visible") });',
+          '</script>',
+          '<script type="importmap">{"imports":{"three":"./three.module.js"}}</script>',
+          '</head><body>',
+          '<script type="module">import * as exported from "./exported-scene.js"; window.__exportedScene = exported;</script>',
+          '</body></html>',
+        ].join(''),
+      })
+      return
+    }
+    if (pathname === '/three.module.js') {
+      await route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: threeModuleJs })
+      return
+    }
+    if (pathname === '/three.core.js') {
+      await route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: threeCoreJs })
+      return
+    }
+    if (pathname === '/exported-scene.js') {
+      await route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: autoRotateSnippet })
+      return
+    }
+    await route.fulfill({ status: 404, body: 'not found' })
+  })
+
+  await page.goto('https://three-export-sandbox.example/hidden-tab.html')
+  await page.waitForFunction(() => Boolean((window as unknown as { __exportedScene?: unknown }).__exportedScene))
+
+  const lifecycleVerify = await page.evaluate(async () => {
+    const win = window as unknown as {
+      __hiddenState: boolean
+      __rafCount: number
+      __exportedScene: {
+        subjectGroup: { rotation: { y: number } }
+        modelGroup: { name: string; children: Array<unknown> }
+        root: {
+          traverse: (cb: (obj: { geometry?: { dispose: () => void }; material?: { dispose: () => void } | Array<{ dispose: () => void }> }) => void) => void
+        }
+        scene: { clear: () => void }
+        renderer: {
+          info: { render: { frame: number; triangles: number }; memory: { geometries: number; textures: number } }
+          dispose: () => void
+        }
+      }
+    }
+    const mod = win.__exportedScene
+
+    // 1. Loaded while hidden: 0 frames rendered and 0 RAF calls scheduled, even after waiting.
+    await new Promise((resolve) => setTimeout(resolve, 180))
+    const frameWhileHidden = mod.renderer.info.render.frame
+    const rafWhileHidden = win.__rafCount
+
+    // 2. Tab returns to foreground: paints 1 static frame immediately, without scheduling RAF.
+    win.__hiddenState = false
+    document.dispatchEvent(new Event('visibilitychange'))
+    const frameOnRestore = mod.renderer.info.render.frame
+    const trianglesOnRestore = mod.renderer.info.render.triangles
+    const geometriesOnRestore = mod.renderer.info.memory.geometries
+    const rafOnRestore = win.__rafCount
+
+    // 3. Remains idle in foreground: no continuous animation loop starts and rotation stays 0.
+    await new Promise((resolve) => setTimeout(resolve, 220))
+    const frameAfterVisibleWait = mod.renderer.info.render.frame
+    const rafAfterVisibleWait = win.__rafCount
+    const rotationY = mod.subjectGroup.rotation.y
+    const geometriesAfterWait = mod.renderer.info.memory.geometries
+
+    // 4. Disposing scene meshes + renderer releases all GPU geometries and textures cleanly.
+    mod.root.traverse((obj) => {
+      obj.geometry?.dispose()
+      if (Array.isArray(obj.material)) {
+        for (const mat of obj.material) mat.dispose()
+      } else {
+        obj.material?.dispose()
+      }
+    })
+    mod.scene.clear()
+    mod.renderer.dispose()
+    const geometriesAfterDispose = mod.renderer.info.memory.geometries
+    const texturesAfterDispose = mod.renderer.info.memory.textures
+
+    return {
+      modelName: mod.modelGroup.name,
+      layerCount: mod.modelGroup.children.length,
+      frameWhileHidden,
+      rafWhileHidden,
+      frameOnRestore,
+      trianglesOnRestore,
+      geometriesOnRestore,
+      rafOnRestore,
+      frameAfterVisibleWait,
+      rafAfterVisibleWait,
+      rotationY,
+      geometriesAfterWait,
+      geometriesAfterDispose,
+      texturesAfterDispose,
+    }
+  })
+
+  expect(lifecycleVerify.modelName).toBe('model-sneaker')
+  expect(lifecycleVerify.layerCount).toBe(13)
+  expect(lifecycleVerify.frameWhileHidden).toBe(0)
+  expect(lifecycleVerify.rafWhileHidden).toBe(0)
+  expect(lifecycleVerify.frameOnRestore).toBe(1)
+  expect(lifecycleVerify.trianglesOnRestore).toBeGreaterThan(1000)
+  expect(lifecycleVerify.geometriesOnRestore).toBe(16)
+  expect(lifecycleVerify.rafOnRestore).toBe(0)
+  expect(lifecycleVerify.frameAfterVisibleWait).toBe(1)
+  expect(lifecycleVerify.rafAfterVisibleWait).toBe(0)
+  expect(lifecycleVerify.rotationY).toBe(0)
+  expect(lifecycleVerify.geometriesAfterWait).toBe(16)
+  expect(lifecycleVerify.geometriesAfterDispose).toBe(0)
+  expect(lifecycleVerify.texturesAfterDispose).toBe(0)
   expect(errors).toEqual([])
 })

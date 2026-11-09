@@ -1241,6 +1241,9 @@ motionQuery?.addEventListener?.('change', (event) => {
 document.addEventListener('visibilitychange', () => {
   if (!shouldAnimate()) {
     stopLoop();
+    if (!document.hidden) {
+      renderer.render(scene, camera);
+    }
   } else if (rafId === 0) {
     lastTickMs = performance.now();
     rafId = requestAnimationFrame(renderFrame);
@@ -1251,7 +1254,7 @@ window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
-  if (!shouldAnimate()) renderer.render(scene, camera);
+  if (!shouldAnimate() && !document.hidden) renderer.render(scene, camera);
 });
 
 renderFrame();`

@@ -389,6 +389,94 @@ describe('Three.js scene builders, raycasting, disposal and code generation', ()
       Object.defineProperty(window, 'matchMedia', { writable: true, value: originalMatchMedia })
     }
   })
+
+  it('paints one static frame on visibility restore without scheduling RAF when loaded in a hidden tab with reduced motion', () => {
+    const originalMatchMedia = window.matchMedia
+    const originalHiddenDescriptor = Object.getOwnPropertyDescriptor(document, 'hidden') ??
+      Object.getOwnPropertyDescriptor(Document.prototype, 'hidden')
+    let hidden = true
+
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      value: vi.fn((query: string) => ({
+        matches: query.includes('prefers-reduced-motion'),
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    })
+    Object.defineProperty(document, 'hidden', {
+      configurable: true,
+      get: () => hidden,
+    })
+
+    try {
+      const code = buildThreeCodeSnippet({
+        model: 'sneaker',
+        swatch: 'violet',
+        material: 'glass',
+        autoRotate: true,
+      })
+
+      let rafCalls = 0
+      let renderCalls = 0
+      const FakeTHREE = {
+        ...THREE,
+        WebGLRenderer: class {
+          domElement = document.createElement('canvas')
+          setPixelRatio() {}
+          setSize() {}
+          render() { renderCalls += 1 }
+        },
+      }
+      const executableBody = code
+        .replace(/^import \* as THREE from 'three';\s*/m, '')
+        .replace(/export \{ scene, root, subjectGroup, modelGroup, camera, renderer \};\s*$/m, 'return { scene, root, subjectGroup, modelGroup, camera, renderer };')
+
+      const runner = new Function('THREE', 'requestAnimationFrame', 'cancelAnimationFrame', executableBody) as (
+        threeNs: typeof FakeTHREE,
+        raf: (cb: FrameRequestCallback) => number,
+        caf: (id: number) => void,
+      ) => { scene: Scene; root: Group; subjectGroup: Group }
+
+      const exported = runner(
+        FakeTHREE,
+        () => { rafCalls += 1; return rafCalls },
+        () => {},
+      )
+
+      // Loaded in a hidden tab with reduced motion: neither render() nor RAF runs while hidden.
+      expect(renderCalls).toBe(0)
+      expect(rafCalls).toBe(0)
+      window.dispatchEvent(new Event('resize'))
+      expect(renderCalls).toBe(0)
+
+      // Restoring tab visibility paints exactly one static frame without starting a RAF loop.
+      hidden = false
+      document.dispatchEvent(new Event('visibilitychange'))
+      expect(renderCalls).toBe(1)
+      expect(rafCalls).toBe(0)
+      expect(exported.subjectGroup.rotation.y).toBe(0)
+
+      // Hiding the tab again does not trigger a wasted background render.
+      hidden = true
+      document.dispatchEvent(new Event('visibilitychange'))
+      expect(renderCalls).toBe(1)
+      expect(rafCalls).toBe(0)
+
+      disposeObject3D(exported.root)
+      exported.scene.clear()
+    } finally {
+      Object.defineProperty(window, 'matchMedia', { writable: true, value: originalMatchMedia })
+      if (originalHiddenDescriptor) {
+        Object.defineProperty(document, 'hidden', originalHiddenDescriptor)
+      }
+    }
+  })
 })
 
 describe('Optional #/space 3D workspace UI & fallback integration', () => {
