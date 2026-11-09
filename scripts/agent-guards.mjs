@@ -3,8 +3,9 @@
  * Proof harness for the maintenance agent's guards.
  *
  * The agent's safety claims are worthless if they are only comments. This
- * harness exercises each guard with an adversarial input and asserts it holds.
- * It runs in CI, so a future refactor that removes a guard fails the build.
+ * harness exercises each guard with an adversarial input in isolated fixtures
+ * (never mutating the live checkout) and asserts it holds. It runs in CI, so a
+ * future refactor that removes a guard fails the build.
  *
  * Usage: node scripts/agent-guards.mjs
  */
@@ -18,19 +19,129 @@ const SCRIPT = resolve('scripts/maintenance-agent.mjs')
 const cases = []
 const check = (name, condition, detail = '') => cases.push({ name, pass: Boolean(condition), detail })
 
-const run = (args) => {
-  const result = spawnSync('node', ['scripts/maintenance-agent.mjs', ...args], { encoding: 'utf8', env: process.env })
+const runDryInRepo = () => {
+  const result = spawnSync(process.execPath, [SCRIPT, '--dry-run'], { encoding: 'utf8', env: process.env })
   return { ok: result.status === 0, out: `${result.stdout ?? ''}${result.stderr ?? ''}` }
 }
 
-// The harness imports the pure predicate logic by re-declaring it in a sandbox:
-// asserting behaviour of the script end-to-end is more honest than testing a copy.
-const apply = run(['--apply'])
-check('refuses to commit on a protected branch',
-  /reason=protected_branch/.test(apply.out) ? /reason=protected_branch/.test(apply.out) : true,
-  'on a feature branch this is expected to be skipped, not to fail')
+// Protected-branch recovery & write-blocking checks run inside isolated temp
+// git repositories so `--apply` never mutates the caller's working directory.
+{
+  const withIsolatedMainRepo = (fn) => {
+    const dir = mkdtempSync(join(tmpdir(), 'celia-agent-main-'))
+    try {
+      spawnSync('git', ['init', '-b', 'main'], { cwd: dir, encoding: 'utf8' })
+      mkdirSync(join(dir, 'node_modules', 'vite'), { recursive: true })
+      writeFileSync(join(dir, '.gitignore'), 'node_modules/\nbin/\n.empty-home/\n')
+      writeFileSync(join(dir, 'package.json'), JSON.stringify({
+        name: 'guard-main-fixture',
+        version: '0.1.0',
+        scripts: { check: 'node -e "process.exit(0)"' },
+        dependencies: { vite: '^8.0.8' },
+      }, null, 2) + '\n')
+      writeFileSync(join(dir, 'package-lock.json'), JSON.stringify({
+        name: 'guard-main-fixture',
+        version: '0.1.0',
+        lockfileVersion: 3,
+      }, null, 2) + '\n')
+      writeFileSync(join(dir, 'CHANGELOG.md'), '# Changelog\n\n## [Unreleased]\n')
+      spawnSync('git', ['add', '.'], { cwd: dir, encoding: 'utf8' })
+      spawnSync('git', ['-c', 'user.name=test', '-c', 'user.email=test@example.invalid', 'commit', '-m', 'base'], { cwd: dir, encoding: 'utf8' })
+      const baseSha = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' }).stdout.trim()
+      return fn({ dir, baseSha })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
 
-const dry = run(['--dry-run'])
+  const makeNpmShim = (dir, scriptBody) => {
+    const binDir = join(dir, 'bin')
+    const emptyHome = join(dir, '.empty-home')
+    mkdirSync(binDir, { recursive: true })
+    mkdirSync(emptyHome, { recursive: true })
+    const shim = join(binDir, 'npm')
+    writeFileSync(shim, `#!/usr/bin/env node\n${scriptBody}\n`)
+    chmodSync(shim, 0o755)
+    const cleanEnv = { ...process.env }
+    delete cleanEnv.GIT_AUTHOR_NAME
+    delete cleanEnv.GIT_AUTHOR_EMAIL
+    delete cleanEnv.GIT_COMMITTER_NAME
+    delete cleanEnv.GIT_COMMITTER_EMAIL
+    return {
+      ...cleanEnv,
+      HOME: emptyHome,
+      GIT_CONFIG_NOSYSTEM: '1',
+      PATH: `${binDir}:${process.env.PATH ?? ''}`,
+    }
+  }
+
+  withIsolatedMainRepo(({ dir, baseSha }) => {
+    const env = makeNpmShim(dir, `process.stdout.write('{}'); process.exit(0)`)
+    const noop = spawnSync(process.execPath, [SCRIPT, '--apply'], { cwd: dir, env, encoding: 'utf8' })
+    const headBranch = spawnSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: dir, encoding: 'utf8' }).stdout.trim()
+    const mainSha = spawnSync('git', ['rev-parse', 'refs/heads/main'], { cwd: dir, encoding: 'utf8' }).stdout.trim()
+    const maintBranches = spawnSync('git', ['branch', '--list', 'maintenance/*'], { cwd: dir, encoding: 'utf8' }).stdout.trim()
+    check(
+      'exits 0 as noop on main without branching when zero routine updates exist',
+      noop.status === 0 &&
+        /agent=noop reason=no_routine_updates_available branch=main/.test(noop.stdout) &&
+        headBranch === 'main' &&
+        mainSha === baseSha &&
+        maintBranches === '',
+      `status=${noop.status} branch=${headBranch}`,
+    )
+  })
+
+  withIsolatedMainRepo(({ dir, baseSha }) => {
+    const env = makeNpmShim(dir, `process.stdout.write('{}'); process.exit(0)`)
+    const commitTargetMain = spawnSync(process.execPath, [SCRIPT, '--apply', '--proposal-branch=main'], { cwd: dir, env, encoding: 'utf8' })
+    const pushTargetMain = spawnSync(process.execPath, [SCRIPT, '--push', 'main'], { cwd: dir, env, encoding: 'utf8' })
+    const mainSha = spawnSync('git', ['rev-parse', 'refs/heads/main'], { cwd: dir, encoding: 'utf8' }).stdout.trim()
+    check(
+      'refuses to commit or push directly on a protected branch',
+      commitTargetMain.status === 1 &&
+        /agent=blocked reason=protected_branch/.test(commitTargetMain.stdout) &&
+        pushTargetMain.status === 1 &&
+        /agent=blocked reason=protected_branch operation=push branch=main/.test(pushTargetMain.stdout) &&
+        mainSha === baseSha,
+      'both --proposal-branch=main and --push main blocked',
+    )
+  })
+
+  withIsolatedMainRepo(({ dir, baseSha }) => {
+    const env = makeNpmShim(
+      dir,
+      `const fs = require('node:fs');
+const args = process.argv.slice(2);
+if (args[0] === 'outdated') {
+  process.stdout.write(JSON.stringify({ vite: { current: '8.0.8', wanted: '8.0.9', latest: '8.0.9' } }));
+  process.exit(1);
+}
+if (args[0] === 'update') {
+  const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+  pkg.dependencies.vite = '^8.0.9';
+  fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\\n');
+  process.exit(0);
+}
+process.exit(0);`,
+    )
+    const prop = spawnSync(process.execPath, [SCRIPT, '--apply'], { cwd: dir, env, encoding: 'utf8' })
+    const headBranch = spawnSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: dir, encoding: 'utf8' }).stdout.trim()
+    const mainSha = spawnSync('git', ['rev-parse', 'refs/heads/main'], { cwd: dir, encoding: 'utf8' }).stdout.trim()
+    const parentSha = spawnSync('git', ['rev-parse', 'HEAD~1'], { cwd: dir, encoding: 'utf8' }).stdout.trim()
+    check(
+      'creates isolated maintenance/* branch from main without mutating main',
+      prop.status === 0 &&
+        /agent=proposed branch=maintenance\/routine-dependencies-/.test(prop.stdout) &&
+        /^maintenance\/routine-dependencies-/.test(headBranch) &&
+        mainSha === baseSha &&
+        parentSha === baseSha,
+      `branch=${headBranch} main_intact=${mainSha === baseSha}`,
+    )
+  })
+}
+
+const dry = runDryInRepo()
 check('dry run never writes', /agent=dry_run_changes=0|agent=noop/.test(dry.out), dry.out.split('\n')[0] ?? '')
 check('dry run never claims a merge', !/agent=merged/.test(dry.out), 'merge is not a capability')
 
@@ -49,7 +160,7 @@ const results = {
 }
 console.log(JSON.stringify(results))
 `
-const guardRun = spawnSync('node', ['--input-type=module', '-e', pathGuard], { encoding: 'utf8' })
+const guardRun = spawnSync(process.execPath, ['--input-type=module', '-e', pathGuard], { encoding: 'utf8' })
 const guardResults = (() => {
   try { return JSON.parse(guardRun.stdout.trim()) } catch { return {} }
 })()
@@ -69,7 +180,7 @@ const results = {
 }
 console.log(JSON.stringify(results))
 `
-const secretRun = spawnSync('node', ['--input-type=module', '-e', secretGuard], { encoding: 'utf8' })
+const secretRun = spawnSync(process.execPath, ['--input-type=module', '-e', secretGuard], { encoding: 'utf8' })
 const secretResults = (() => {
   try { return JSON.parse(secretRun.stdout.trim()) } catch { return {} }
 })()
@@ -78,9 +189,7 @@ for (const [key, value] of Object.entries(secretResults)) {
 }
 
 // Classification completeness: every outdated package must land in exactly one
-// reported bucket. The bug this pins: a package whose `wanted` already equals
-// `current` (a major exists only outside the declared range) was skipped by
-// `continue` and appeared in no bucket at all.
+// reported bucket.
 {
   const classify = `
 const semver = /^\\d+\\.\\d+\\.\\d+/
@@ -93,7 +202,7 @@ const parsed = {
 }
 const buckets = []
 for (const [name, info] of Object.entries(parsed)) {
-  const { current, latest, wanted } = info ?? {}
+  const { current, wanted } = info ?? {}
   if (!semver.test(current ?? '')) continue
   if (majorOf(current) !== majorOf(wanted ?? current)) { buckets.push(name + ':major'); continue }
   if ((wanted ?? current) === current) { buckets.push(name + ':satisfied'); continue }
@@ -101,7 +210,7 @@ for (const [name, info] of Object.entries(parsed)) {
 }
 console.log(JSON.stringify(buckets))
 `
-  const result = spawnSync('node', ['--input-type=module', '-e', classify], { encoding: 'utf8' })
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', classify], { encoding: 'utf8' })
   const buckets = (() => {
     try { return JSON.parse(result.stdout.trim()) } catch { return [] }
   })()
@@ -173,7 +282,6 @@ console.log(JSON.stringify(buckets))
     !brokenOutdated.ok && /agent=blocked reason=outdated_query_failed/.test(brokenOutdated.out),
     brokenOutdated.out.split('\n')[0] ?? '')
 }
-
 
 const failed = cases.filter((entry) => !entry.pass)
 for (const entry of cases) console.log(`${entry.pass ? 'PASS' : 'FAIL'}  ${entry.name}${entry.detail ? `  (${entry.detail})` : ''}`)
