@@ -197,10 +197,10 @@ export function Space() {
       queueMicrotask(() => setWebglReady(false))
       return
     }
-    const width = Math.max(host.clientWidth, 320)
-    const height = Math.max(host.clientHeight, 360)
+    const width = Math.max(host.clientWidth, 300)
+    const height = Math.max(host.clientHeight, 340)
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
-    renderer.setSize(width, height)
+    renderer.setSize(width, height, false)
     renderer.domElement.className = 'space-canvas'
     renderer.domElement.setAttribute('aria-hidden', 'true')
     host.appendChild(renderer.domElement)
@@ -251,11 +251,11 @@ export function Space() {
 
     const resizeObserver = typeof ResizeObserver !== 'undefined'
       ? new ResizeObserver(() => {
-          const nextWidth = Math.max(host.clientWidth, 280)
-          const nextHeight = Math.max(host.clientHeight, 320)
+          const nextWidth = Math.max(host.clientWidth, 260)
+          const nextHeight = Math.max(host.clientHeight, 300)
           camera.aspect = nextWidth / nextHeight
           camera.updateProjectionMatrix()
-          renderer.setSize(nextWidth, nextHeight)
+          renderer.setSize(nextWidth, nextHeight, false)
         })
       : null
     resizeObserver?.observe(host)
@@ -502,7 +502,7 @@ export function Space() {
               <p className="space-panel-intro">
                 اختر أي عقدة من القائمة أو انقر على مجسّمها المداري داخل المشهد لمعاينة حالتها والانتقال إليها فوراً.
               </p>
-              <div className="space-node-list" role="list">
+              <div className="space-node-list" role="group" aria-label="قائمة عُقد المساحة">
                 {nodes.map((node) => {
                   const selected = node.id === activeNode.id
                   return (
