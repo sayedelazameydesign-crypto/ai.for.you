@@ -81,7 +81,7 @@ for (const theme of ['light', 'dark']) {
     test.setTimeout(60000)
     await page.goto('/')
     if (theme === 'dark') await page.getByRole('button', { name: 'تفعيل الوضع الداكن' }).click()
-    for (const route of ['/', '/#/marketing', '/#/summary', '/#/code', '/#/saved', '/#/settings', '/#/guide']) {
+    for (const route of ['/', '/#/space', '/#/marketing', '/#/summary', '/#/code', '/#/saved', '/#/settings', '/#/guide']) {
       await page.goto(route)
       await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
       const report = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()
@@ -115,7 +115,7 @@ test('content security policy blocks nothing the app needs', async ({ page }) =>
   await expect(page.getByRole('heading', { level: 1 })).toContainText('أدوات صغيرة')
 
   // Walk every route so lazily loaded chunks are exercised under the policy.
-  for (const route of ['/', '/#/marketing', '/#/summary', '/#/code', '/#/saved', '/#/settings', '/#/guide']) {
+  for (const route of ['/', '/#/space', '/#/marketing', '/#/summary', '/#/code', '/#/saved', '/#/settings', '/#/guide']) {
     await page.goto(route)
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
   }
@@ -258,4 +258,38 @@ test('production build with VITE_API_BASE allows the declared origin and blocks 
   } finally {
     rmSync(outDir, { recursive: true, force: true })
   }
+})
+
+test('optional Three.js space stays lazy on home and renders both interactive 3D modes on #/space', async ({ page }) => {
+  const requestedScripts: string[] = []
+  page.on('request', (req) => {
+    if (req.resourceType() === 'script') requestedScripts.push(req.url())
+  })
+
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto('/')
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('أدوات صغيرة')
+  await page.waitForLoadState('networkidle')
+
+  // Initial 2D workspace must never fetch the Three.js or Space modules.
+  expect(requestedScripts.some((url) => /(?:\/three|[/.]Space)/i.test(url))).toBe(false)
+
+  await page.getByRole('button', { name: /افتح الفضاء ثلاثي الأبعاد/ }).click()
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('مساحتك في أبعاد ثلاثة.')
+  expect(await page.evaluate(() => location.hash)).toBe('#/space')
+
+  // Once #/space is opened, the 3D module is fetched on demand and has no horizontal overflow.
+  expect(requestedScripts.some((url) => /Space/i.test(url))).toBe(true)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+
+  // Exercise 360° Showcase mode, configurator controls and live code generator.
+  await page.getByRole('button', { name: /مستعرض ومخصّص 360°/ }).click()
+  await page.getByRole('button', { name: /نواة Celia الذكية/ }).click()
+  await page.getByRole('button', { name: 'اللون: زمردي هادئ' }).click()
+  await page.getByRole('button', { name: 'زجاجي لامع' }).click()
+  await expect(page.getByLabel('كود Three.js المولّد')).toContainText('MeshPhysicalMaterial')
+
+  // Verify mobile layout has zero horizontal overflow on #/space.
+  await page.setViewportSize({ width: 390, height: 844 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
 })

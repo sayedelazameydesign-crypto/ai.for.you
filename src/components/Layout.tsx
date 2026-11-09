@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { ArrowUpLeft, BookOpen, Bookmark, ChevronLeft, Command, House, Menu, Moon, Search, Settings2, ShieldCheck, Sparkles, Sun, X, ArrowLeft, CircleHelp } from 'lucide-react'
+import { ArrowUpLeft, BookOpen, Bookmark, Box, ChevronLeft, Command, House, Menu, Moon, Search, Settings2, ShieldCheck, Sparkles, Sun, X, ArrowLeft, CircleHelp } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useWorkspace } from '../hooks'
 import { tools } from '../tools/index'
@@ -11,13 +11,14 @@ import { Modal } from './ui'
 import { Brand, BrandName } from './Brand'
 import { useReveal, usePointerTilt } from '../hooks/useMotion'
 
-const pageNames: Record<Route, string> = { home: 'نظرة عامة', saved: 'المكتبة', settings: 'الإعدادات', guide: 'دليل البداية', ...Object.fromEntries(tools.map((tool) => [tool.id, tool.short])) as Record<ToolId, string> }
+const pageNames: Record<Route, string> = { home: 'نظرة عامة', space: 'الفضاء ثلاثي الأبعاد', saved: 'المكتبة', settings: 'الإعدادات', guide: 'دليل البداية', ...Object.fromEntries(tools.map((tool) => [tool.id, tool.short])) as Record<ToolId, string> }
 
 function SearchDialog({ onClose }: { onClose: () => void }) {
   const [query, setQuery] = useState('')
   const { navigate } = useWorkspace()
   const options: { route: Route; label: string; icon: LucideIcon; keywords: string }[] = [
     { route: 'home', label: 'نظرة عامة', icon: House, keywords: 'الرئيسية dashboard home' },
+    { route: 'space', label: 'الفضاء ثلاثي الأبعاد (Three.js)', icon: Box, keywords: '3d three webgl عالم افتراضي مجسمات CeliaOS فضاء' },
     ...tools.map((tool) => ({ route: tool.id as Route, label: tool.title, icon: tool.icon, keywords: `${tool.description} ${tool.id}` })),
     { route: 'saved', label: 'النتائج المحفوظة', icon: Bookmark, keywords: 'مكتبتي saved library' },
     { route: 'settings', label: 'الإعدادات والخصوصية', icon: Settings2, keywords: 'الوضع الداكن ذكاء اصطناعي API' },
@@ -89,7 +90,7 @@ export function Layout({ children }: { children: ReactNode }) {
     <aside ref={sidebarRef} inert={mobile && !mobileOpen} role={mobile && mobileOpen ? 'dialog' : undefined} aria-modal={mobile && mobileOpen ? true : undefined} className={`sidebar ${mobileOpen ? 'sidebar-open' : ''}`} aria-label="القائمة الرئيسية">
       <div className="sidebar-brand"><button onClick={() => go('home')} aria-label={`${site.brandLatin} — الصفحة الرئيسية`}><Brand /></button><button className="icon-button mobile-close" onClick={closeMobile} aria-label="إغلاق القائمة"><X size={20} /></button></div>
       <div className="workspace-label"><span className="workspace-avatar"><Sparkles size={17} /></span><div><strong>مساحتك الشخصية</strong><span>صغيرة بالأدوات، كبيرة بالأثر</span></div><span className="workspace-free">مجاني</span></div>
-      <nav className="sidebar-nav"><span className="nav-section-label">مساحة العمل</span><button className={`nav-item ${route === 'home' ? 'active' : ''}`} onClick={() => go('home')} aria-current={route === 'home' ? 'page' : undefined}><House size={19} /><span>نظرة عامة</span>{route === 'home' && <span className="active-nav-dot" />}</button>
+      <nav className="sidebar-nav"><span className="nav-section-label">مساحة العمل</span><button className={`nav-item ${route === 'home' ? 'active' : ''}`} onClick={() => go('home')} aria-current={route === 'home' ? 'page' : undefined}><House size={19} /><span>نظرة عامة</span>{route === 'home' && <span className="active-nav-dot" />}</button><button className={`nav-item ${route === 'space' ? 'active' : ''}`} onClick={() => go('space')} aria-current={route === 'space' ? 'page' : undefined}><Box size={19} /><span>الفضاء ثلاثي الأبعاد</span><span className="nav-3d-badge" dir="ltr">3D</span></button>
         <span className="nav-section-label tools-label">أدواتك الذكية</span>
         {tools.map((tool) => <button key={tool.id} className={`nav-item ${route === tool.id ? 'active' : ''}`} onClick={() => go(tool.id)} aria-current={route === tool.id ? 'page' : undefined}><tool.icon size={19} /><span>{tool.short}</span><span className={`tool-nav-dot ${tool.color}`} /></button>)}
         <div className="nav-divider" /><button className={`nav-item ${route === 'saved' ? 'active' : ''}`} onClick={() => go('saved')} aria-current={route === 'saved' ? 'page' : undefined}><Bookmark size={19} /><span>النتائج المحفوظة</span><span className="nav-count">{saved.length.toLocaleString('ar-EG')}</span></button>

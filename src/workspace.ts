@@ -2,11 +2,11 @@ import { createContext } from 'react'
 import type { EngineMode, SavedItem, ToolId, ToolResult } from '../shared/types'
 import { TOOL_IDS } from '../shared/tools'
 
-export type StaticRoute = 'home' | 'saved' | 'settings' | 'guide'
+export type StaticRoute = 'home' | 'space' | 'saved' | 'settings' | 'guide'
 export type Route = StaticRoute | ToolId
-export const staticRoutes: StaticRoute[] = ['home', 'saved', 'settings', 'guide']
+export const staticRoutes: StaticRoute[] = ['home', 'space', 'saved', 'settings', 'guide']
 // Tool routes come from the shared id list, so a new tool is routable on registration.
-export const routes: Route[] = ['home', ...TOOL_IDS, 'saved', 'settings', 'guide']
+export const routes: Route[] = ['home', 'space', ...TOOL_IDS, 'saved', 'settings', 'guide']
 export function currentRoute(): Route {
   const hash = window.location.hash.replace(/^#\/?/, '').split('?')[0]
   return routes.includes(hash as Route) ? hash as Route : 'home'

@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowUpLeft, Bookmark, Check, ChevronLeft, FolderHeart, Lightbulb, LockKeyhole, ShieldCheck, Sparkles, Zap } from 'lucide-react'
+import { ArrowLeft, ArrowUpLeft, Bookmark, Box, Check, ChevronLeft, FolderHeart, Lightbulb, LockKeyhole, ShieldCheck, Sparkles, Zap } from 'lucide-react'
 import { useWorkspace } from '../hooks'
 import { tools } from '../tools/index'
 import type { ToolId } from '../../shared/tools'
@@ -17,6 +17,14 @@ export function Dashboard({ onExample }: { onExample: (tool: ToolId) => void }) 
         <div className={`tool-preview preview-${tool.id}`} aria-hidden="true">{tool.id === 'marketing' ? <><div className="mini-post"><span className="mini-avatar">ن</span><div><strong>فكرة تستحق أن تُشارك</strong><span>كلماتك، بصوت يشبهك.</span></div><Sparkles size={15} /></div><div className="mini-tags"><span>#إبداع</span><span>#صناعة_المحتوى</span><span className="mini-tag-sparkle">✦</span></div></> : tool.id === 'summary' ? <><div className="mini-doc-lines"><i /><i /><i /></div><ArrowLeft size={18} /><div className="mini-summary"><span><Check size={12} />الفكرة الأولى، بوضوح</span><span><Check size={12} />الخلاصة التي تحتاجها</span></div></> : <><div className="mini-editor-top"><i /><i /><i /><span>your-idea.js</span></div><div className="mini-code" dir="ltr"><span><b>const</b> idea = <em>'something great'</em>;</span><span><b>return</b> idea.<mark>celia</mark>(); <i>✓</i></span></div></>}</div>
         <button className="tool-card-action" onClick={() => navigate(tool.id)}><span>{tool.action}</span><ArrowLeft size={17} /></button>
       </article>)}</div>
+    </section>
+    <section className="space-banner" aria-labelledby="space-banner-title" data-reveal>
+      <div className="space-banner-copy">
+        <span className="space-banner-pill"><Box size={14} />اختياري · Three.js &amp; WebGL</span>
+        <h2 id="space-banner-title">استكشف مساحتك في أبعاد ثلاثة.</h2>
+        <p>ادخل عالم CeliaOS التفاعلي لرؤية أدواتك ومكتبتك كشبكة حية، أو خصّص مجسّمات بدوران 360° وصدّر كود المشهد — يُحمَّل عند الطلب فقط.</p>
+      </div>
+      <button className="button button-primary" onClick={() => navigate('space')}>افتح الفضاء ثلاثي الأبعاد <ArrowLeft size={17} /></button>
     </section>
     <section className="dashboard-lower" data-reveal><div className="quick-start"><div className="section-heading compact"><div><h2><Lightbulb size={19} />لا تبدأ من صفحة بيضاء</h2><p>أمثلة جاهزة لتجرّب الأدوات في ثوانٍ.</p></div></div><div className="example-list">{tools.map((tool) => <button key={tool.id} onClick={() => onExample(tool.id)}><span className={`example-icon ${tool.color}`}><tool.icon size={18} /></span><span><strong>{tool.example.title}</strong><small>{tool.example.hint}</small></span><ChevronLeft size={17} /></button>)}</div></div>
       <div className="privacy-card"><span className="privacy-icon"><ShieldCheck size={29} strokeWidth={1.5} /></span><span className="privacy-decoration" aria-hidden="true">✧</span><h2>أفكارك ملكك.<br />وخصوصيتك أيضاً.</h2><p>الأدوات المحلية تعالج نصّك على جهازك.<br />لا حسابات، لا تتبّع، ولا مفاتيح مطلوبة.</p><div><span><LockKeyhole size={14} />أنت تتحكم ببياناتك</span><button onClick={() => navigate('settings')} aria-label="اقرأ إعدادات الخصوصية"><ArrowUpLeft size={19} /></button></div></div>
