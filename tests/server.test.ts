@@ -180,6 +180,69 @@ describe('server-only AI configuration', () => {
     // Another client can still spend the untouched daily quota slot.
     expect((await handleRequest(request(), setup, `honest-client-${time}`)).status).toBe(200)
   })
+  it('does not roll back or erase the new day quota when a slow body finishes after UTC midnight', async () => {
+    const baseMidnight = (Math.floor(time / 86_400_000) + 2) * 86_400_000
+    let clock = baseMidnight - 500
+    const fetcher = vi.fn<typeof fetch>(async () => Response.json({ choices: [{ message: { content: JSON.stringify(marketingResult) } }] }))
+    const sharedSetup: { env: AIEnvironment; fetcher: typeof fetch; now: () => number; sleep: () => Promise<void> } = {
+      env: { ...env, AI_DAILY_LIMIT: '2' },
+      fetcher,
+      now: () => clock,
+      sleep: async () => {},
+    }
+
+    const payload = JSON.stringify({ tool: 'marketing', input: marketingExample, consent: true })
+    const encoder = new TextEncoder()
+    const midpoint = Math.floor(payload.length / 2)
+    let markFirstHalfRead!: () => void
+    const firstHalfRead = new Promise<void>((resolve) => { markFirstHalfRead = resolve })
+    let releaseSecondHalf!: () => void
+    const secondHalfReady = new Promise<void>((resolve) => { releaseSecondHalf = resolve })
+
+    let step = 0
+    const slowBody = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        if (step === 0) {
+          step = 1
+          controller.enqueue(encoder.encode(payload.slice(0, midpoint)))
+          markFirstHalfRead()
+          return
+        }
+        await secondHalfReady
+        controller.enqueue(encoder.encode(payload.slice(midpoint)))
+        controller.close()
+      },
+    })
+    const slowRequest = new Request('https://example.test/api/v1/ai', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-lek-access': env.AI_ACCESS_CODE },
+      body: slowBody,
+      duplex: 'half',
+    } as RequestInit)
+
+    try {
+      // 1. Slow request enters at 23:59:59.500Z and pauses mid-stream inside readBounded().
+      const slowInFlight = handleRequest(slowRequest, sharedSetup, 'midnight-slow-client')
+      await firstHalfRead
+
+      // 2. Clock crosses UTC midnight; a fast request on the new day spends slot 1 of 2.
+      clock = baseMidnight + 1000
+      expect((await handleRequest(request(), sharedSetup, 'new-day-client-1')).status).toBe(200)
+
+      // 3. Slow request finishes streaming at 00:00:01Z and must spend slot 2 of 2 on the new day.
+      releaseSecondHalf()
+      expect((await slowInFlight).status).toBe(200)
+
+      // 4. A third request on the new day must hit the daily ceiling rather than seeing a reset counter.
+      clock = baseMidnight + 2000
+      const third = await handleRequest(request(), sharedSetup, 'new-day-client-2')
+      expect(third.status).toBe(429)
+      expect((await third.json()).error.code).toBe('rate-limit')
+      expect(fetcher).toHaveBeenCalledTimes(2)
+    } finally {
+      time = baseMidnight + 86_400_000
+    }
+  })
   it('enforces the 280-character X limit on provider output while keeping longer posts elsewhere', async () => {
     const xInput = { ...marketingExample, platform: 'x' as const }
     const tooLongForX = { variants: [{ id: 'v1', label: 'منشور', text: 'س'.repeat(281) }] }

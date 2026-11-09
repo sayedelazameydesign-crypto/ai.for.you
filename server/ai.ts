@@ -158,7 +158,8 @@ export function resetRateLimits(): void {
 
 function isDailyExhausted(now: number, limit: number): boolean {
   const day = new Date(now).toISOString().slice(0, 10)
-  if (daily.day !== day) daily = { count: 0, day }
+  // Advance monotonically: a stale timestamp must never rewind a newer UTC day.
+  if (!daily.day || day > daily.day) daily = { count: 0, day }
   return daily.count >= limit
 }
 
@@ -299,7 +300,10 @@ async function routeRequest(request: Request, config: ServerConfig, client: stri
   if (!validateRequest(body)) return failure(400, 'input', 'راجع الحقول والحدود: النص حتى 12,000 حرف للوضع السحابي، ويجب الموافقة على إرساله.', cors)
   const model = env.GROQ_MODEL?.trim() || provider.defaultModel
   if (!/^[\w./-]{1,120}$/.test(model)) return failure(503, 'model', 'إعداد اسم النموذج غير صالح.', cors)
-  if (!consumeDailyQuota(now, limit)) {
+  // Re-read the clock after awaiting the body so a stream crossing UTC midnight
+  // is charged to the current day instead of rewinding the daily counter.
+  const quotaNow = config.now?.() ?? Date.now()
+  if (!consumeDailyQuota(quotaNow, limit)) {
     return failure(429, 'rate-limit', 'وصل الخادم إلى حد الطلبات حالياً. انتظر دقيقة أو حاول غداً، أو استخدم الوضع المحلي.', { ...cors, 'Retry-After': '60' })
   }
 
