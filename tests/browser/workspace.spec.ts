@@ -293,3 +293,173 @@ test('optional Three.js space stays lazy on home and renders both interactive 3D
   await page.setViewportSize({ width: 390, height: 844 })
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
 })
+
+test('Three.js runtime suspends RAF when paused, reuses a single WebGL context without geometry leaks, and exports runnable multi-layer ES modules', async ({ page, context }) => {
+  test.setTimeout(60000)
+  const errors: string[] = []
+  page.on('pageerror', (error) => errors.push(error.message))
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto('/#/space')
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('مساحتك في أبعاد ثلاثة.')
+
+  const stage = page.locator('.space-stage')
+  const readStats = () =>
+    stage.evaluate((el) => {
+      const fn = (el as unknown as {
+        __celiaSpaceStats?: () => {
+          frames: number
+          loopActive: boolean
+          continuous: boolean
+          rendererMounts: number
+          sceneSwaps: number
+          gpuGeometries: number
+          gpuTextures: number
+        }
+      }).__celiaSpaceStats
+      return fn ? fn() : null
+    })
+
+  // 1. Active loop advances frames on a single WebGLRenderer context.
+  await expect(stage).toHaveAttribute('data-render-state', 'active')
+  await expect.poll(async () => (await readStats())?.frames ?? 0).toBeGreaterThanOrEqual(2)
+  const initialStats = await readStats()
+  expect(initialStats).not.toBeNull()
+  expect(initialStats!.rendererMounts).toBe(1)
+  expect(initialStats!.gpuGeometries).toBeGreaterThan(0)
+
+  // 2. Switch to 360° Showcase (Sneaker = 13 model layers + 3 stage meshes + 1 starfield = 17 geometries)
+  //    and verify pausing auto-rotate stops requestAnimationFrame completely (0 idle frames).
+  await page.getByRole('button', { name: /مستعرض ومخصّص 360°/ }).click()
+  const sneakerBaselineGeos = (await readStats())!.gpuGeometries
+  expect(sneakerBaselineGeos).toBe(17)
+
+  await page.getByRole('button', { name: 'إيقاف الدوران التلقائي' }).click()
+  await expect(stage).toHaveAttribute('data-render-state', 'idle')
+  const pausedStats = (await readStats())!
+  expect(pausedStats.loopActive).toBe(false)
+  expect(pausedStats.continuous).toBe(false)
+
+  await page.waitForTimeout(260)
+  const afterIdleWait = (await readStats())!
+  expect(afterIdleWait.frames).toBe(pausedStats.frames)
+  expect(afterIdleWait.loopActive).toBe(false)
+
+  // 3. Manual camera zoom while paused renders a single on-demand frame and returns to idle.
+  await page.getByRole('button', { name: 'تكبير المشهد' }).click()
+  await expect.poll(async () => (await readStats())?.frames ?? 0).toBe(pausedStats.frames + 1)
+  await expect(stage).toHaveAttribute('data-render-state', 'idle')
+  await page.waitForTimeout(180)
+  expect((await readStats())!.frames).toBe(pausedStats.frames + 1)
+
+  // 4. Rapidly cycle models, swatches, materials and modes: must reuse the same WebGLRenderer
+  //    and return to the exact baseline GPU geometry count with zero leaks.
+  await page.getByRole('button', { name: /نواة Celia الذكية/ }).click()
+  await page.getByRole('button', { name: 'زجاجي لامع' }).click()
+  await page.getByRole('button', { name: /بلّورة متعدّدة الأوجه/ }).click()
+  await page.getByRole('button', { name: 'شبكي هندسي' }).click()
+  await page.getByRole('button', { name: /شبكة CeliaOS الحية/ }).click()
+  await page.getByRole('button', { name: /مستعرض ومخصّص 360°/ }).click()
+  await page.getByRole('button', { name: /حذاء رياضي هندسي/ }).click()
+  await page.getByRole('button', { name: 'زجاجي لامع' }).click()
+  await page.getByRole('button', { name: 'اللون: بنفسجي Celia' }).click()
+
+  const afterSwaps = (await readStats())!
+  expect(afterSwaps.rendererMounts).toBe(1)
+  expect(afterSwaps.sceneSwaps).toBeGreaterThanOrEqual(8)
+  expect(afterSwaps.gpuGeometries).toBe(sneakerBaselineGeos)
+  expect(afterSwaps.loopActive).toBe(false)
+
+  // 5. Copy the generated Three.js snippet (Sneaker + Glass + Paused) and verify clean GPU unmount.
+  await page.getByRole('button', { name: 'نسخ كود Three.js' }).click()
+  const copiedSnippet = await page.evaluate(() => navigator.clipboard.readText())
+  expect(copiedSnippet).toContain("modelGroup.name = 'model-sneaker'")
+
+  await page.getByRole('button', { name: 'الرئيسية', exact: true }).click()
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('أدوات صغيرة')
+  const unmountSnapshot = await page.evaluate(
+    () => (window as unknown as { __celiaSpaceLastUnmount?: { gpuGeometries: number; gpuTextures: number } }).__celiaSpaceLastUnmount ?? null,
+  )
+  expect(unmountSnapshot).toEqual({ gpuGeometries: 0, gpuTextures: 0 })
+
+  // 6. Execute the verbatim copied ES module in Chromium against three@0.187.0 (zero eval).
+  const threeModuleJs = readFileSync('node_modules/three/build/three.module.js', 'utf8')
+  const threeCoreJs = readFileSync('node_modules/three/build/three.core.js', 'utf8')
+  await page.route(/^https:\/\/three-export-sandbox\.example\//, async (route) => {
+    const pathname = new URL(route.request().url()).pathname
+    if (pathname === '/' || pathname === '/index.html') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'text/html; charset=utf-8',
+        body: [
+          '<!doctype html><html><head>',
+          '<script type="importmap">{"imports":{"three":"./three.module.js"}}</script>',
+          '</head><body>',
+          '<script type="module">import * as exported from "./exported-scene.js"; window.__exportedScene = exported;</script>',
+          '</body></html>',
+        ].join(''),
+      })
+      return
+    }
+    if (pathname === '/three.module.js') {
+      await route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: threeModuleJs })
+      return
+    }
+    if (pathname === '/three.core.js') {
+      await route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: threeCoreJs })
+      return
+    }
+    if (pathname === '/exported-scene.js') {
+      await route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: copiedSnippet })
+      return
+    }
+    await route.fulfill({ status: 404, body: 'not found' })
+  })
+
+  await page.goto('https://three-export-sandbox.example/')
+  await page.waitForFunction(() => Boolean((window as unknown as { __exportedScene?: unknown }).__exportedScene))
+
+  const exportVerify = await page.evaluate(async () => {
+    const mod = (window as unknown as {
+      __exportedScene: {
+        modelGroup: { name: string; children: Array<{ geometry: { type: string }; material: { type: string; clearcoat?: number } }> }
+        root: { children: Array<{ type: string; geometry?: { type: string } }> }
+        renderer: { info: { render: { frame: number; triangles: number }; memory: { geometries: number } }; dispose: () => void }
+      }
+    }).__exportedScene
+    const frameAtMount = mod.renderer.info.render.frame
+    const trianglesAtMount = mod.renderer.info.render.triangles
+    const geometriesAtMount = mod.renderer.info.memory.geometries
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    const frameAfterIdle = mod.renderer.info.render.frame
+    const result = {
+      modelName: mod.modelGroup.name,
+      layerCount: mod.modelGroup.children.length,
+      geometryTypes: mod.modelGroup.children.map((c) => c.geometry.type),
+      materialTypes: Array.from(new Set(mod.modelGroup.children.map((c) => c.material.type))),
+      clearcoat: mod.modelGroup.children[0]?.material?.clearcoat ?? 0,
+      stageMeshCount: mod.root.children.filter((c) => c.type === 'Mesh').length,
+      frameAtMount,
+      frameAfterIdle,
+      trianglesAtMount,
+      geometriesAtMount,
+    }
+    mod.renderer.dispose()
+    return result
+  })
+
+  expect(exportVerify.modelName).toBe('model-sneaker')
+  expect(exportVerify.layerCount).toBe(13)
+  expect(exportVerify.geometryTypes).toContain('ExtrudeGeometry')
+  expect(exportVerify.geometryTypes).toContain('CapsuleGeometry')
+  expect(exportVerify.geometryTypes).toContain('TorusGeometry')
+  expect(exportVerify.materialTypes).toEqual(['MeshPhysicalMaterial'])
+  expect(exportVerify.clearcoat).toBe(1)
+  expect(exportVerify.stageMeshCount).toBe(3)
+  expect(exportVerify.trianglesAtMount).toBeGreaterThan(1000)
+  expect(exportVerify.geometriesAtMount).toBe(16)
+  expect(exportVerify.frameAtMount).toBe(1)
+  expect(exportVerify.frameAfterIdle).toBe(1)
+  expect(errors).toEqual([])
+})

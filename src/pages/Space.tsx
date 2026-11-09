@@ -27,6 +27,7 @@ import {
   clampCameraState,
   createCeliaNetworkGraph,
   createProductShowcaseGraph,
+  createRenderLoopController,
   DEFAULT_CAMERA_NETWORK,
   DEFAULT_CAMERA_SHOWCASE,
   disposeObject3D,
@@ -43,12 +44,27 @@ import type {
   CeliaNetworkGraph,
   NetworkNodeSpec,
   ProductShowcaseGraph,
+  RenderLoopController,
   ShowcaseMaterialId,
   ShowcaseModelId,
   ShowcaseSwatchId,
   SpaceMode,
   SphericalCameraState,
 } from '../lib/space3d'
+
+interface SpaceRuntimeSnapshot {
+  frames: number
+  loopActive: boolean
+  continuous: boolean
+  rendererMounts: number
+  sceneSwaps: number
+  gpuGeometries: number
+  gpuTextures: number
+}
+
+interface SpaceStageElement extends HTMLDivElement {
+  __celiaSpaceStats?: () => SpaceRuntimeSnapshot
+}
 
 const TOOL_HEX: Record<string, string> = {
   purple: '#a78bfa',
@@ -139,23 +155,26 @@ export function Space() {
     [model, swatch, material, autoRotate],
   )
 
-  const stageRef = useRef<HTMLDivElement>(null)
+  const stageRef = useRef<SpaceStageElement>(null)
   const cameraStateRef = useRef<SphericalCameraState>({ ...DEFAULT_CAMERA_NETWORK })
+  const rendererRef = useRef<WebGLRenderer | null>(null)
+  const sceneRef = useRef<Scene | null>(null)
   const cameraObjRef = useRef<PerspectiveCamera | null>(null)
+  const loopRef = useRef<RenderLoopController | null>(null)
   const networkGraphRef = useRef<CeliaNetworkGraph | null>(null)
+  const showcaseGraphRef = useRef<ProductShowcaseGraph | null>(null)
+  const rendererMountsRef = useRef<number>(0)
+  const sceneSwapsRef = useRef<number>(0)
   const selectedNodeRef = useRef<string>(selectedNodeId)
   const autoRotateRef = useRef<boolean>(autoRotate)
   const reducedMotionRef = useRef<boolean>(reducedMotion)
-
-  useEffect(() => { selectedNodeRef.current = selectedNodeId }, [selectedNodeId])
-  useEffect(() => { autoRotateRef.current = autoRotate }, [autoRotate])
-  useEffect(() => { reducedMotionRef.current = reducedMotion }, [reducedMotion])
 
   const syncCamera = useCallback((next: SphericalCameraState) => {
     const clamped = clampCameraState(next)
     cameraStateRef.current = clamped
     if (cameraObjRef.current) {
       applyCameraOrbit(cameraObjRef.current, clamped)
+      loopRef.current?.requestRender()
     }
   }, [])
 
@@ -185,18 +204,25 @@ export function Space() {
       : { ...DEFAULT_CAMERA_SHOWCASE }
   }, [spaceMode])
 
-  // WebGL scene setup & teardown. Disposes every resource on mode/config change and unmount.
+  // Mount a single WebGLRenderer + demand-driven render scheduler for the lifetime of <Space />.
   useEffect(() => {
     const host = stageRef.current
-    if (!host || !webglReady) return
+    if (!host) return
+    if (!webglReady) {
+      host.dataset.renderState = 'fallback'
+      return
+    }
 
     let renderer: WebGLRenderer
     try {
       renderer = new WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' })
     } catch {
+      host.dataset.renderState = 'fallback'
       queueMicrotask(() => setWebglReady(false))
       return
     }
+    rendererMountsRef.current += 1
+
     const width = Math.max(host.clientWidth, 300)
     const height = Math.max(host.clientHeight, 340)
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
@@ -205,49 +231,53 @@ export function Space() {
     renderer.domElement.setAttribute('aria-hidden', 'true')
     host.appendChild(renderer.domElement)
 
-    const scene = new Scene()
-    scene.background = new Color('#0d1021')
-    scene.fog = new FogExp2('#0d1021', 0.048)
-
     const camera = new PerspectiveCamera(48, width / height, 0.1, 100)
+    rendererRef.current = renderer
     cameraObjRef.current = camera
     applyCameraOrbit(camera, cameraStateRef.current)
 
-    attachStudioLights(scene, spaceMode === 'showcase' ? activeSwatch.glow : '#8b5cf6')
+    const loop = createRenderLoopController(
+      (elapsed, animating) => {
+        const activeScene = sceneRef.current
+        if (!activeScene) return
+        if (networkGraphRef.current) {
+          updateCeliaNetworkGraph(
+            networkGraphRef.current,
+            elapsed,
+            selectedNodeRef.current,
+            !animating,
+          )
+        }
+        if (showcaseGraphRef.current) {
+          updateShowcaseGraph(
+            showcaseGraphRef.current,
+            elapsed,
+            animating,
+            reducedMotionRef.current,
+          )
+        }
+        renderer.render(activeScene, camera)
+      },
+      {
+        onStateChange: (active) => {
+          host.dataset.renderState = active ? 'active' : 'idle'
+        },
+      },
+    )
+    loopRef.current = loop
 
-    let netGraph: CeliaNetworkGraph | null = null
-    let showGraph: ProductShowcaseGraph | null = null
-
-    if (spaceMode === 'network') {
-      netGraph = createCeliaNetworkGraph(nodes)
-      networkGraphRef.current = netGraph
-      scene.add(netGraph.root)
-    } else {
-      showGraph = createProductShowcaseGraph({ model, swatch, material, autoRotate: autoRotateRef.current })
-      networkGraphRef.current = null
-      scene.add(showGraph.root)
-    }
-
-    let rafId = 0
-    const startTime = performance.now()
-
-    const renderFrame = () => {
-      const elapsed = (performance.now() - startTime) / 1000
-      if (netGraph) {
-        updateCeliaNetworkGraph(
-          netGraph,
-          elapsed,
-          selectedNodeRef.current,
-          reducedMotionRef.current || !autoRotateRef.current,
-        )
+    host.__celiaSpaceStats = () => {
+      const loopStats = loop.getStats()
+      return {
+        frames: loopStats.frames,
+        loopActive: loopStats.loopActive,
+        continuous: loopStats.continuous,
+        rendererMounts: rendererMountsRef.current,
+        sceneSwaps: sceneSwapsRef.current,
+        gpuGeometries: renderer.info.memory.geometries,
+        gpuTextures: renderer.info.memory.textures,
       }
-      if (showGraph) {
-        updateShowcaseGraph(showGraph, elapsed, autoRotateRef.current, reducedMotionRef.current)
-      }
-      renderer.render(scene, camera)
-      rafId = window.requestAnimationFrame(renderFrame)
     }
-    renderFrame()
 
     const resizeObserver = typeof ResizeObserver !== 'undefined'
       ? new ResizeObserver(() => {
@@ -256,20 +286,89 @@ export function Space() {
           camera.aspect = nextWidth / nextHeight
           camera.updateProjectionMatrix()
           renderer.setSize(nextWidth, nextHeight, false)
+          loop.requestRender()
         })
       : null
     resizeObserver?.observe(host)
 
+    const handleVisibility = () => loop.onVisibilityChange()
+    document.addEventListener('visibilitychange', handleVisibility)
+
     return () => {
-      window.cancelAnimationFrame(rafId)
+      document.removeEventListener('visibilitychange', handleVisibility)
+      loop.dispose()
       resizeObserver?.disconnect()
+      if (sceneRef.current) {
+        disposeObject3D(sceneRef.current)
+        sceneRef.current = null
+      }
+      ;(window as unknown as { __celiaSpaceLastUnmount?: { gpuGeometries: number; gpuTextures: number } }).__celiaSpaceLastUnmount = {
+        gpuGeometries: renderer.info.memory.geometries,
+        gpuTextures: renderer.info.memory.textures,
+      }
+      delete host.__celiaSpaceStats
       networkGraphRef.current = null
+      showcaseGraphRef.current = null
+      loopRef.current = null
       cameraObjRef.current = null
-      disposeObject3D(scene)
+      rendererRef.current = null
       renderer.dispose()
       renderer.domElement.remove()
     }
+  }, [webglReady])
+
+  // Swap and dispose only the Scene graph when mode, workspace nodes or 3D showcase config changes.
+  useEffect(() => {
+    const renderer = rendererRef.current
+    const camera = cameraObjRef.current
+    const loop = loopRef.current
+    if (!webglReady || !renderer || !camera || !loop) return
+
+    if (sceneRef.current) {
+      disposeObject3D(sceneRef.current)
+      sceneRef.current = null
+    }
+    networkGraphRef.current = null
+    showcaseGraphRef.current = null
+
+    const scene = new Scene()
+    scene.background = new Color('#0d1021')
+    scene.fog = new FogExp2('#0d1021', 0.048)
+
+    attachStudioLights(scene, spaceMode === 'showcase' ? activeSwatch.glow : '#8b5cf6')
+
+    if (spaceMode === 'network') {
+      const netGraph = createCeliaNetworkGraph(nodes)
+      networkGraphRef.current = netGraph
+      scene.add(netGraph.root)
+    } else {
+      const showGraph = createProductShowcaseGraph({
+        model,
+        swatch,
+        material,
+        autoRotate: autoRotateRef.current,
+      })
+      showcaseGraphRef.current = showGraph
+      scene.add(showGraph.root)
+    }
+
+    sceneRef.current = scene
+    sceneSwapsRef.current += 1
+    applyCameraOrbit(camera, cameraStateRef.current)
+    loop.setContinuous(autoRotateRef.current && !reducedMotionRef.current)
+    loop.renderNow()
   }, [webglReady, spaceMode, nodes, model, swatch, material, activeSwatch.glow])
+
+  useEffect(() => {
+    selectedNodeRef.current = selectedNodeId
+    loopRef.current?.requestRender()
+  }, [selectedNodeId])
+
+  useEffect(() => {
+    autoRotateRef.current = autoRotate
+    reducedMotionRef.current = reducedMotion
+    loopRef.current?.setContinuous(autoRotate && !reducedMotion)
+  }, [autoRotate, reducedMotion])
 
   // Pointer drag orbit + click raycasting for 3D network nodes.
   const dragRef = useRef<{ active: boolean; startX: number; startY: number; moved: boolean; az: number; pol: number }>({
@@ -372,7 +471,7 @@ export function Space() {
         >
           <Network size={16} />
           <span>شبكة CeliaOS الحية</span>
-          <span className="mode-beta">عالم الوكلاء</span>
+          <span className="mode-beta">خريطة الأدوات</span>
         </button>
         <button
           type="button"
@@ -632,7 +731,7 @@ export function Space() {
         <div>
           <h3>طبقة ثلاثية الأبعاد مسؤولة في استهلاك الموارد</h3>
           <p>
-            لا تُحمَّل مكتبة <code>three</code> مطلقاً عند فتح الصفحة الرئيسية أو الأدوات النصية، بل تُستدعى بحزمة مستقلة عند دخول هذه الصفحة فقط، مع ضبط سقف دقة البكسل (<code>2x</code>) وإيقاف الحركة التلقائية عند تفعيل تقليل الحركة وتحرير ذاكرة البطاقة الرسومية فور مغادرة المشهد.
+            لا تُحمَّل مكتبة <code>three</code> مطلقاً عند فتح الصفحة الرئيسية أو الأدوات النصية، بل تُستدعى بحزمة مستقلة عند دخول هذه الصفحة فقط، مع إعادة استخدام سياق WebGL واحد، وإيقاف حلقة الرسم تلقائياً عند إيقاف الدوران أو تفعيل تقليل الحركة، وتحرير ذاكرة البطاقة الرسومية فور تبديل المشهد أو مغادرته.
           </p>
         </div>
       </div>

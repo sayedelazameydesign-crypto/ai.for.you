@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import * as THREE from 'three'
 import {
   BoxGeometry,
   Group,
@@ -20,6 +21,7 @@ import {
   clampCameraState,
   createCeliaNetworkGraph,
   createProductShowcaseGraph,
+  createRenderLoopController,
   DEFAULT_CAMERA_NETWORK,
   disposeObject3D,
   getModelMeta,
@@ -31,7 +33,7 @@ import {
   updateCeliaNetworkGraph,
   updateShowcaseGraph,
 } from '../src/lib/space3d'
-import type { NetworkNodeSpec } from '../src/lib/space3d'
+import type { NetworkNodeSpec, ShowcaseConfig } from '../src/lib/space3d'
 
 const SAMPLE_NODES: NetworkNodeSpec[] = [
   { id: 'marketing', label: 'مولّد المحتوى التسويقي', subtitle: 'كتابة تسويقية', route: 'marketing', category: 'tool', count: 3, color: '#a78bfa' },
@@ -125,7 +127,7 @@ describe('Three.js scene builders, raycasting, disposal and code generation', ()
     expect(spy2).toHaveBeenCalledTimes(1)
   })
 
-  it('clamps spherical camera bounds, attaches studio lights, and generates runnable Three.js snippets', () => {
+  it('clamps spherical camera bounds, attaches studio lights, and exports accurate multi-layer Three.js scenes', () => {
     const clamped = clampCameraState({ azimuth: 1.2, polar: -5, distance: 99 })
     expect(clamped.polar).toBeGreaterThanOrEqual(0.42)
     expect(clamped.distance).toBeLessThanOrEqual(9.2)
@@ -137,16 +139,174 @@ describe('Three.js scene builders, raycasting, disposal and code generation', ()
     expect(getSwatchMeta('violet').accent).toBe('#8b6fe8')
     expect(getModelMeta('prism').id).toBe('prism')
 
-    const glassCode = buildThreeCodeSnippet({ model: 'prism', swatch: 'violet', material: 'glass', autoRotate: true })
-    expect(glassCode).toContain("import * as THREE from 'three'")
-    expect(glassCode).toContain('TorusKnotGeometry')
-    expect(glassCode).toContain('MeshPhysicalMaterial')
-    expect(glassCode).toContain('#8b6fe8')
-    expect(glassCode).toContain('mesh.rotation.y += 0.012')
+    const expectedLayerCounts = { sneaker: 13, pod: 5, prism: 2 } as const
 
-    const wirePaused = buildThreeCodeSnippet({ model: 'pod', swatch: 'coral', material: 'wireframe', autoRotate: false })
-    expect(wirePaused).toContain('wireframe: true')
-    expect(wirePaused).toContain('الدوران التلقائي متوقف')
+    for (const modelMeta of SHOWCASE_MODELS) {
+      for (const materialMeta of SHOWCASE_MATERIALS) {
+        const config: ShowcaseConfig = {
+          model: modelMeta.id,
+          swatch: 'violet',
+          material: materialMeta.id,
+          autoRotate: materialMeta.id === 'glass',
+        }
+        const liveGraph = createProductShowcaseGraph(config)
+        const liveModel = liveGraph.subjectGroup.children[0] as Group
+        expect(liveModel.children).toHaveLength(expectedLayerCounts[modelMeta.id])
+
+        const code = buildThreeCodeSnippet(config)
+        expect(code).toContain("import * as THREE from 'three';")
+        expect(code).toContain('export { scene, root, subjectGroup, modelGroup, camera, renderer };')
+
+        let rafCalls = 0
+        let renderCalls = 0
+        const FakeTHREE = {
+          ...THREE,
+          WebGLRenderer: class {
+            domElement = document.createElement('canvas')
+            setPixelRatio() {}
+            setSize() {}
+            render() { renderCalls += 1 }
+          },
+        }
+        const executableBody = code
+          .replace(/^import \* as THREE from 'three';\s*/m, '')
+          .replace(/export \{ scene, root, subjectGroup, modelGroup, camera, renderer \};\s*$/m, 'return { scene, root, subjectGroup, modelGroup, camera, renderer };')
+
+        const runner = new Function('THREE', 'requestAnimationFrame', 'cancelAnimationFrame', executableBody) as (
+          threeNs: typeof FakeTHREE,
+          raf: (cb: FrameRequestCallback) => number,
+          caf: (id: number) => void,
+        ) => { scene: Scene; root: Group; subjectGroup: Group; modelGroup: Group }
+
+        const exported = runner(
+          FakeTHREE,
+          () => { rafCalls += 1; return rafCalls },
+          () => {},
+        )
+
+        expect(renderCalls).toBe(1)
+        expect(rafCalls).toBe(config.autoRotate ? 1 : 0)
+        expect(exported.modelGroup.name).toBe(liveModel.name)
+        expect(exported.modelGroup.children).toHaveLength(liveModel.children.length)
+
+        // Compare every mesh layer's geometry type, transform and material against the live Showcase graph.
+        exported.modelGroup.children.forEach((child, idx) => {
+          const expMesh = child as Mesh
+          const liveMesh = liveModel.children[idx] as Mesh
+          expect(expMesh.geometry.type).toBe(liveMesh.geometry.type)
+          expect(expMesh.position.toArray()).toEqual(liveMesh.position.toArray())
+          expect(expMesh.rotation.toArray()).toEqual(liveMesh.rotation.toArray())
+          expect(expMesh.scale.toArray()).toEqual(liveMesh.scale.toArray())
+          const expMat = expMesh.material as MeshStandardMaterial | MeshPhysicalMaterial
+          const liveMat = liveMesh.material as MeshStandardMaterial | MeshPhysicalMaterial
+          expect(expMat.type).toBe(liveMat.type)
+          expect(expMat.color.getHexString()).toBe(liveMat.color.getHexString())
+          expect(expMat.wireframe).toBe(liveMat.wireframe)
+          if (liveMat instanceof MeshPhysicalMaterial) {
+            expect((expMat as MeshPhysicalMaterial).clearcoat).toBe(liveMat.clearcoat)
+          }
+        })
+
+        // Also assert the 3-piece glowing 360° turntable pedestal is present in exported root.
+        const exportedStageGeos = exported.root.children
+          .filter((c): c is Mesh => c instanceof Mesh)
+          .map((m) => m.geometry.type)
+        expect(exportedStageGeos).toEqual(['CylinderGeometry', 'TorusGeometry', 'RingGeometry'])
+
+        disposeObject3D(exported.root)
+        disposeObject3D(liveGraph.root)
+        exported.scene.clear()
+      }
+    }
+  })
+
+  it('suspends requestAnimationFrame when paused or hidden and renders single coalesced frames on demand', () => {
+    let clockMs = 1000
+    let hidden = false
+    let nextId = 1
+    const queue = new Map<number, FrameRequestCallback>()
+    const stateHistory: boolean[] = []
+    const observedFrames: Array<{ elapsed: number; animating: boolean }> = []
+
+    const flushNext = () => {
+      const first = queue.entries().next()
+      if (first.done) return false
+      const [id, cb] = first.value
+      queue.delete(id)
+      cb(clockMs)
+      return true
+    }
+
+    const loop = createRenderLoopController(
+      (elapsed, animating) => observedFrames.push({ elapsed, animating }),
+      {
+        requestFrame: (cb) => {
+          const id = nextId++
+          queue.set(id, cb)
+          return id
+        },
+        cancelFrame: (id) => { queue.delete(id) },
+        now: () => clockMs,
+        isHidden: () => hidden,
+        onStateChange: (active) => stateHistory.push(active),
+      },
+    )
+
+    // Static mount renders synchronously once and leaves zero queued RAF callbacks.
+    loop.setContinuous(false)
+    loop.renderNow()
+    expect(observedFrames).toHaveLength(1)
+    expect(observedFrames[0]).toEqual({ elapsed: 0, animating: false })
+    expect(queue.size).toBe(0)
+    expect(loop.getStats().loopActive).toBe(false)
+
+    // Multiple on-demand requests coalesce into a single RAF callback and return to idle.
+    loop.requestRender()
+    loop.requestRender()
+    loop.requestRender()
+    expect(queue.size).toBe(1)
+    expect(flushNext()).toBe(true)
+    expect(observedFrames).toHaveLength(2)
+    expect(queue.size).toBe(0)
+    expect(loop.getStats().loopActive).toBe(false)
+
+    // Continuous mode schedules next RAF and accumulates clamped elapsed time.
+    loop.setContinuous(true)
+    expect(loop.getStats().loopActive).toBe(true)
+    expect(queue.size).toBe(1)
+    clockMs += 50
+    flushNext()
+    expect(observedFrames.at(-1)?.elapsed).toBeCloseTo(0.05, 5)
+    expect(queue.size).toBe(1)
+
+    // Pausing cancels the pending RAF immediately and preserves elapsedSec without jumping on resume.
+    loop.setContinuous(false)
+    expect(queue.size).toBe(0)
+    expect(loop.getStats().loopActive).toBe(false)
+    const frozenElapsed = loop.getStats().elapsedSec
+    clockMs += 5000
+    loop.setContinuous(true)
+    clockMs += 40
+    flushNext()
+    expect(loop.getStats().elapsedSec).toBeCloseTo(frozenElapsed + 0.04, 5)
+
+    // Tab visibility suspension stops RAF immediately and resumes cleanly when visible again.
+    hidden = true
+    loop.onVisibilityChange()
+    expect(queue.size).toBe(0)
+    expect(loop.getStats().loopActive).toBe(false)
+
+    hidden = false
+    loop.setContinuous(false)
+    loop.onVisibilityChange()
+    expect(queue.size).toBe(1)
+    flushNext()
+    expect(queue.size).toBe(0)
+
+    loop.dispose()
+    loop.requestRender()
+    expect(queue.size).toBe(0)
+    expect(stateHistory.at(-1)).toBe(false)
   })
 })
 

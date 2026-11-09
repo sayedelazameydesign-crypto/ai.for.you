@@ -834,54 +834,474 @@ export function attachStudioLights(scene: Scene, glowHex = '#8b5cf6'): void {
   scene.add(ambient, keyLight, rimLight, coreLight)
 }
 
-/** Generate clean, runnable Three.js ES module code matching the active showcase configuration. */
+export interface RenderLoopStats {
+  frames: number
+  loopActive: boolean
+  continuous: boolean
+  elapsedSec: number
+}
+
+export interface RenderLoopEnv {
+  requestFrame?: (cb: FrameRequestCallback) => number
+  cancelFrame?: (id: number) => void
+  now?: () => number
+  isHidden?: () => boolean
+  onStateChange?: (loopActive: boolean) => void
+}
+
+export interface RenderLoopController {
+  /** Enable or pause continuous animation without losing accumulated elapsed time. */
+  setContinuous: (enabled: boolean) => void
+  /** Coalesce a single on-demand frame render when the loop is idle. */
+  requestRender: () => void
+  /** Render one frame synchronously (e.g. after a scene swap) and sync loop scheduling. */
+  renderNow: () => void
+  /** Suspend RAF while the tab is hidden; resume or paint once when visible again. */
+  onVisibilityChange: () => void
+  /** Cancel any scheduled frame and prevent future callbacks. */
+  dispose: () => void
+  /** Read loop counters without triggering React state updates. */
+  getStats: () => RenderLoopStats
+}
+
+/**
+ * Demand-driven WebGL render scheduler.
+ * When `continuous` is false or the document is hidden, zero background RAF callbacks run;
+ * camera orbit, zoom, resize and selection wake the renderer for a single coalesced frame.
+ */
+export function createRenderLoopController(
+  onFrame: (elapsedSec: number, animating: boolean) => void,
+  env: RenderLoopEnv = {},
+): RenderLoopController {
+  const requestFrame = env.requestFrame ?? ((cb: FrameRequestCallback) => window.requestAnimationFrame(cb))
+  const cancelFrame = env.cancelFrame ?? ((id: number) => window.cancelAnimationFrame(id))
+  const now = env.now ?? (() => performance.now())
+  const isHidden = env.isHidden ?? (() => typeof document !== 'undefined' && document.hidden)
+
+  let continuous = false
+  let disposed = false
+  let rafId = 0
+  let frames = 0
+  let elapsedSec = 0
+  let lastTickMs: number | null = null
+  let reportedActive: boolean | null = null
+
+  const emitState = (active: boolean) => {
+    if (reportedActive === active) return
+    reportedActive = active
+    env.onStateChange?.(active)
+  }
+
+  const cancelScheduled = () => {
+    if (rafId !== 0) {
+      cancelFrame(rafId)
+      rafId = 0
+    }
+    lastTickMs = null
+  }
+
+  const tick: FrameRequestCallback = (timestampMs) => {
+    rafId = 0
+    if (disposed || isHidden()) {
+      lastTickMs = null
+      emitState(false)
+      return
+    }
+    const animating = continuous
+    if (animating) {
+      const currentMs = Number.isFinite(timestampMs) ? timestampMs : now()
+      if (lastTickMs !== null) {
+        elapsedSec += Math.min(Math.max(0, (currentMs - lastTickMs) / 1000), 0.1)
+      }
+      lastTickMs = currentMs
+    } else {
+      lastTickMs = null
+    }
+    frames += 1
+    onFrame(elapsedSec, animating)
+
+    if (!disposed && continuous && !isHidden()) {
+      rafId = requestFrame(tick)
+      emitState(true)
+    } else {
+      emitState(false)
+    }
+  }
+
+  const syncContinuousLoop = () => {
+    if (disposed || isHidden() || !continuous) {
+      cancelScheduled()
+      emitState(false)
+      return
+    }
+    if (rafId === 0) {
+      lastTickMs = now()
+      rafId = requestFrame(tick)
+    }
+    emitState(true)
+  }
+
+  return {
+    setContinuous(enabled: boolean) {
+      continuous = enabled
+      syncContinuousLoop()
+    },
+    requestRender() {
+      if (disposed || isHidden() || rafId !== 0) return
+      rafId = requestFrame(tick)
+    },
+    renderNow() {
+      if (disposed) return
+      if (isHidden()) {
+        cancelScheduled()
+        emitState(false)
+        return
+      }
+      frames += 1
+      onFrame(elapsedSec, continuous)
+      if (continuous) {
+        if (rafId === 0) {
+          lastTickMs = now()
+          rafId = requestFrame(tick)
+        }
+        emitState(true)
+      } else {
+        cancelScheduled()
+        emitState(false)
+      }
+    },
+    onVisibilityChange() {
+      if (disposed) return
+      if (isHidden()) {
+        cancelScheduled()
+        emitState(false)
+      } else if (continuous) {
+        syncContinuousLoop()
+      } else if (rafId === 0) {
+        rafId = requestFrame(tick)
+      }
+    },
+    dispose() {
+      disposed = true
+      cancelScheduled()
+      emitState(false)
+    },
+    getStats() {
+      return {
+        frames,
+        loopActive: !disposed && continuous && !isHidden() && rafId !== 0,
+        continuous,
+        elapsedSec,
+      }
+    },
+  }
+}
+
+function buildExportedMaterialFactory(materialKind: ShowcaseMaterialId): string {
+  if (materialKind === 'wireframe') {
+    return `function createConfiguredMaterial(colorHex, options = {}) {
+  return new THREE.MeshStandardMaterial({
+    color: colorHex,
+    emissive: options.emissive ?? colorHex,
+    emissiveIntensity: options.emissiveIntensity ?? 0.55,
+    wireframe: true,
+    roughness: 0.3,
+    metalness: 0.2,
+  });
+}`
+  }
+  if (materialKind === 'glass') {
+    return `function createConfiguredMaterial(colorHex, options = {}) {
+  return new THREE.MeshPhysicalMaterial({
+    color: colorHex,
+    emissive: options.emissive ?? '#000000',
+    emissiveIntensity: options.emissiveIntensity ?? 0,
+    roughness: options.roughness ?? 0.12,
+    metalness: options.metalness ?? 0.15,
+    clearcoat: 1,
+    clearcoatRoughness: 0.08,
+    reflectivity: 0.95,
+  });
+}`
+  }
+  return `function createConfiguredMaterial(colorHex, options = {}) {
+  return new THREE.MeshStandardMaterial({
+    color: colorHex,
+    emissive: options.emissive ?? '#000000',
+    emissiveIntensity: options.emissiveIntensity ?? 0,
+    roughness: options.roughness ?? 0.32,
+    metalness: options.metalness ?? 0.45,
+  });
+}`
+}
+
+function buildExportedModelBlock(model: ShowcaseModelId, swatch: ShowcaseSwatchMeta): string {
+  if (model === 'sneaker') {
+    return `const modelGroup = new THREE.Group();
+modelGroup.name = 'model-sneaker';
+
+const primaryMat = createConfiguredMaterial('${swatch.primary}', { roughness: 0.42, metalness: 0.18 });
+const accentMat = createConfiguredMaterial('${swatch.accent}', {
+  roughness: 0.24,
+  metalness: 0.52,
+  emissive: '${swatch.accent}',
+  emissiveIntensity: 0.18,
+});
+const trimMat = createConfiguredMaterial('${swatch.trim}', {
+  roughness: 0.26,
+  metalness: 0.48,
+  emissive: '${swatch.trim}',
+  emissiveIntensity: 0.2,
+});
+const soleMat = createConfiguredMaterial('#f8fafc', { roughness: 0.35, metalness: 0.1 });
+
+const soleShape = new THREE.Shape();
+soleShape.moveTo(-1.28, -0.32);
+soleShape.quadraticCurveTo(-0.4, -0.44, 0.95, -0.36);
+soleShape.quadraticCurveTo(1.42, -0.28, 1.35, -0.06);
+soleShape.quadraticCurveTo(0.85, 0.04, -0.2, 0.08);
+soleShape.quadraticCurveTo(-1.12, 0.14, -1.32, -0.06);
+soleShape.quadraticCurveTo(-1.38, -0.22, -1.28, -0.32);
+
+const midsoleGeo = new THREE.ExtrudeGeometry(soleShape, {
+  depth: 0.76,
+  bevelEnabled: true,
+  bevelSegments: 4,
+  steps: 1,
+  bevelSize: 0.07,
+  bevelThickness: 0.07,
+});
+midsoleGeo.center();
+const midsole = new THREE.Mesh(midsoleGeo, soleMat);
+midsole.position.set(0, -0.34, 0);
+modelGroup.add(midsole);
+
+const outsole = new THREE.Mesh(new THREE.BoxGeometry(2.52, 0.08, 0.82), accentMat);
+outsole.position.set(0.02, -0.56, 0);
+modelGroup.add(outsole);
+
+const upper = new THREE.Mesh(new THREE.CapsuleGeometry(0.42, 1.38, 12, 24), primaryMat);
+upper.rotation.z = Math.PI / 2 - 0.14;
+upper.scale.set(1, 1, 0.92);
+upper.position.set(-0.04, 0.05, 0);
+modelGroup.add(upper);
+
+const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.44, 0.56, 24), accentMat);
+collar.position.set(-0.68, 0.36, 0);
+collar.rotation.z = 0.22;
+modelGroup.add(collar);
+
+const heelClip = new THREE.Mesh(new THREE.TorusGeometry(0.41, 0.075, 14, 28, Math.PI * 1.15), trimMat);
+heelClip.position.set(-0.78, 0.06, 0);
+heelClip.rotation.y = Math.PI / 2;
+heelClip.rotation.x = -0.25;
+modelGroup.add(heelClip);
+
+for (const side of [-1, 1]) {
+  const fin = new THREE.Mesh(new THREE.BoxGeometry(1.12, 0.14, 0.05), accentMat);
+  fin.position.set(0.02, 0.08, side * 0.41);
+  fin.rotation.z = 0.24;
+  modelGroup.add(fin);
+
+  const airWindow = new THREE.Mesh(new THREE.CapsuleGeometry(0.055, 0.36, 8, 12), trimMat);
+  airWindow.rotation.z = Math.PI / 2;
+  airWindow.position.set(-0.62, -0.34, side * 0.39);
+  modelGroup.add(airWindow);
+}
+
+for (let i = 0; i < 4; i++) {
+  const lace = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, 0.54, 10), trimMat);
+  lace.rotation.x = Math.PI / 2;
+  lace.position.set(-0.14 + i * 0.19, 0.36 - i * 0.055, 0);
+  modelGroup.add(lace);
+}
+
+modelGroup.rotation.z = 0.22;
+modelGroup.position.y = 0.26;`
+  }
+
+  if (model === 'pod') {
+    return `const modelGroup = new THREE.Group();
+modelGroup.name = 'model-pod';
+
+const bodyMat = createConfiguredMaterial('${swatch.primary}', { roughness: 0.22, metalness: 0.58 });
+const accentMat = createConfiguredMaterial('${swatch.accent}', {
+  roughness: 0.18,
+  metalness: 0.65,
+  emissive: '${swatch.accent}',
+  emissiveIntensity: 0.28,
+});
+const coreMat = createConfiguredMaterial('${swatch.trim}', {
+  roughness: 0.12,
+  metalness: 0.2,
+  emissive: '${swatch.glow}',
+  emissiveIntensity: 0.65,
+});
+
+const capsule = new THREE.Mesh(new THREE.CapsuleGeometry(0.66, 0.72, 18, 36), bodyMat);
+modelGroup.add(capsule);
+
+const visorBand = new THREE.Mesh(new THREE.CylinderGeometry(0.69, 0.69, 0.28, 40), accentMat);
+visorBand.position.y = 0.16;
+modelGroup.add(visorBand);
+
+const lens = new THREE.Mesh(new THREE.SphereGeometry(0.24, 24, 24), coreMat);
+lens.position.set(0, 0.16, 0.56);
+modelGroup.add(lens);
+
+const gyroA = new THREE.Mesh(new THREE.TorusGeometry(1.08, 0.032, 14, 64), accentMat);
+gyroA.rotation.x = Math.PI / 2.8;
+modelGroup.add(gyroA);
+
+const gyroB = new THREE.Mesh(new THREE.TorusGeometry(1.24, 0.022, 12, 64), coreMat);
+gyroB.rotation.y = Math.PI / 3;
+gyroB.rotation.x = -Math.PI / 5;
+modelGroup.add(gyroB);
+
+modelGroup.position.y = 0.22;`
+  }
+
+  return `const modelGroup = new THREE.Group();
+modelGroup.name = 'model-prism';
+
+const knotMat = createConfiguredMaterial('${swatch.accent}', {
+  roughness: 0.18,
+  metalness: 0.68,
+  emissive: '${swatch.accent}',
+  emissiveIntensity: 0.2,
+});
+const innerMat = createConfiguredMaterial('${swatch.trim}', {
+  roughness: 0.15,
+  metalness: 0.35,
+  emissive: '${swatch.glow}',
+  emissiveIntensity: 0.5,
+});
+
+const knot = new THREE.Mesh(new THREE.TorusKnotGeometry(0.84, 0.24, 128, 22), knotMat);
+modelGroup.add(knot);
+
+const gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.46, 0), innerMat);
+modelGroup.add(gem);
+
+modelGroup.position.y = 0.24;`
+}
+
+/** Generate clean, runnable Three.js ES module code reconstructing the exact multi-layer 3D model and stage. */
 export function buildThreeCodeSnippet(config: ShowcaseConfig): string {
   const swatch = getSwatchMeta(config.swatch)
-  const geometryLine = config.model === 'sneaker'
-    ? 'const geometry = new THREE.CapsuleGeometry(0.45, 1.35, 16, 32);'
-    : config.model === 'pod'
-      ? 'const geometry = new THREE.CapsuleGeometry(0.66, 0.72, 18, 36);'
-      : 'const geometry = new THREE.TorusKnotGeometry(0.84, 0.24, 128, 22);'
+  const materialFactory = buildExportedMaterialFactory(config.material)
+  const modelBlock = buildExportedModelBlock(config.model, swatch)
 
-  const materialBlock = config.material === 'glass'
-    ? `const material = new THREE.MeshPhysicalMaterial({\n  color: '${swatch.accent}',\n  roughness: 0.12,\n  metalness: 0.15,\n  clearcoat: 1,\n});`
-    : config.material === 'wireframe'
-      ? `const material = new THREE.MeshStandardMaterial({\n  color: '${swatch.accent}',\n  emissive: '${swatch.glow}',\n  emissiveIntensity: 0.55,\n  wireframe: true,\n});`
-      : `const material = new THREE.MeshStandardMaterial({\n  color: '${swatch.accent}',\n  roughness: 0.32,\n  metalness: 0.45,\n});`
+  const loopBlock = config.autoRotate
+    ? `let rafId = 0;
+let elapsedSec = 0;
+let lastTickMs = performance.now();
 
-  const rotationBlock = config.autoRotate
-    ? '  mesh.rotation.y += 0.012;\n'
-    : '  // الدوران التلقائي متوقف — استخدم OrbitControls للتحريك اليدوي\n'
+function renderFrame(now = performance.now()) {
+  rafId = 0;
+  if (document.hidden) return;
+  elapsedSec += Math.min(Math.max(0, (now - lastTickMs) / 1000), 0.1);
+  lastTickMs = now;
+  subjectGroup.rotation.y = elapsedSec * 0.62;
+  subjectGroup.position.y = Math.sin(elapsedSec * 1.8) * 0.07;
+  turntableRingOuter.scale.setScalar(1 + Math.sin(elapsedSec * 2.2) * 0.025);
+  renderer.render(scene, camera);
+  rafId = requestAnimationFrame(renderFrame);
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    cancelAnimationFrame(rafId);
+    rafId = 0;
+  } else if (rafId === 0) {
+    lastTickMs = performance.now();
+    rafId = requestAnimationFrame(renderFrame);
+  }
+});
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+renderFrame();`
+    : `// الدوران التلقائي متوقف — يُرسم المشهد عند الطلب فقط دون حلقة requestAnimationFrame مستمرة
+function renderOnce() {
+  renderer.render(scene, camera);
+}
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderOnce();
+});
+
+renderOnce();`
 
   return `import * as THREE from 'three';
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color('#0e1020');
+scene.background = new THREE.Color('#0d1021');
+scene.fog = new THREE.FogExp2('#0d1021', 0.048);
 
-const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
-camera.position.set(0, 1.2, 5.2);
+const camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.1, 100);
+camera.position.set(-2.39, 2.06, 4.18);
+camera.lookAt(0, 0.08, 0);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
-${geometryLine}
-${materialBlock}
+${materialFactory}
 
-const mesh = new THREE.Mesh(geometry, material);
-scene.add(mesh);
+const root = new THREE.Group();
+root.name = 'celia-showcase-root';
 
+const pedestal = new THREE.Mesh(
+  new THREE.CylinderGeometry(1.75, 1.92, 0.12, 64),
+  new THREE.MeshStandardMaterial({ color: '#14172b', roughness: 0.28, metalness: 0.72 }),
+);
+pedestal.position.y = -0.95;
+root.add(pedestal);
+
+const turntableRingOuter = new THREE.Mesh(
+  new THREE.TorusGeometry(1.98, 0.022, 12, 96),
+  new THREE.MeshBasicMaterial({ color: '${swatch.glow}', transparent: true, opacity: 0.75 }),
+);
+turntableRingOuter.rotation.x = Math.PI / 2;
+turntableRingOuter.position.y = -0.88;
+root.add(turntableRingOuter);
+
+const turntableRingInner = new THREE.Mesh(
+  new THREE.RingGeometry(1.18, 1.48, 72),
+  new THREE.MeshBasicMaterial({ color: '${swatch.accent}', side: THREE.DoubleSide, transparent: true, opacity: 0.22 }),
+);
+turntableRingInner.rotation.x = -Math.PI / 2;
+turntableRingInner.position.y = -0.87;
+root.add(turntableRingInner);
+
+const subjectGroup = new THREE.Group();
+subjectGroup.name = 'showcase-subject';
+
+${modelBlock}
+
+subjectGroup.add(modelGroup);
+root.add(subjectGroup);
+scene.add(root);
+
+const ambient = new THREE.AmbientLight('#dbe4ff', 0.85);
 const keyLight = new THREE.DirectionalLight('#ffffff', 2.1);
 keyLight.position.set(4, 5, 6);
-const rimLight = new THREE.PointLight('${swatch.glow}', 1.8, 14);
-rimLight.position.set(-3, 2, -3);
-scene.add(new THREE.AmbientLight('#dbe4ff', 0.85), keyLight, rimLight);
+const rimLight = new THREE.DirectionalLight('${swatch.glow}', 1.45);
+rimLight.position.set(-5, 3, -4);
+const coreLight = new THREE.PointLight('#fbbf24', 1.6, 12);
+coreLight.position.set(0, 0.4, 1.5);
+scene.add(ambient, keyLight, rimLight, coreLight);
 
-function animate() {
-  requestAnimationFrame(animate);
-${rotationBlock}  renderer.render(scene, camera);
-}
+${loopBlock}
 
-animate();`
+export { scene, root, subjectGroup, modelGroup, camera, renderer };`
 }
