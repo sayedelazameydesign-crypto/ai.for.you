@@ -322,12 +322,14 @@ test('Three.js runtime suspends RAF when paused, reuses a single WebGL context w
       return fn ? fn() : null
     })
 
-  // 1. Active loop advances frames on a single WebGLRenderer context.
+  // 1. Active loop advances frames on a single live WebGLRenderer context
+  //    (React StrictMode in dev mounts->cleans->remounts once on initial mount, then stays constant).
   await expect(stage).toHaveAttribute('data-render-state', 'active')
   await expect.poll(async () => (await readStats())?.frames ?? 0).toBeGreaterThanOrEqual(2)
   const initialStats = await readStats()
   expect(initialStats).not.toBeNull()
-  expect(initialStats!.rendererMounts).toBe(1)
+  expect(initialStats!.rendererMounts).toBeGreaterThanOrEqual(1)
+  expect(initialStats!.rendererMounts).toBeLessThanOrEqual(2)
   expect(initialStats!.gpuGeometries).toBeGreaterThan(0)
 
   // 2. Switch to 360° Showcase (Sneaker = 13 model layers + 3 stage meshes + 1 starfield = 17 geometries)
@@ -367,7 +369,7 @@ test('Three.js runtime suspends RAF when paused, reuses a single WebGL context w
   await page.getByRole('button', { name: 'اللون: بنفسجي Celia' }).click()
 
   const afterSwaps = (await readStats())!
-  expect(afterSwaps.rendererMounts).toBe(1)
+  expect(afterSwaps.rendererMounts).toBe(initialStats!.rendererMounts)
   expect(afterSwaps.sceneSwaps).toBeGreaterThanOrEqual(8)
   expect(afterSwaps.gpuGeometries).toBe(sneakerBaselineGeos)
   expect(afterSwaps.loopActive).toBe(false)
