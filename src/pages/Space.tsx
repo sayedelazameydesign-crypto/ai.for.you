@@ -302,6 +302,7 @@ export function Space() {
         disposeObject3D(sceneRef.current)
         sceneRef.current = null
       }
+      renderer.dispose()
       ;(window as unknown as { __celiaSpaceLastUnmount?: { gpuGeometries: number; gpuTextures: number } }).__celiaSpaceLastUnmount = {
         gpuGeometries: renderer.info.memory.geometries,
         gpuTextures: renderer.info.memory.textures,
@@ -312,7 +313,6 @@ export function Space() {
       loopRef.current = null
       cameraObjRef.current = null
       rendererRef.current = null
-      renderer.dispose()
       renderer.domElement.remove()
     }
   }, [webglReady])
