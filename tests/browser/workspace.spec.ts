@@ -333,10 +333,18 @@ test('Three.js runtime suspends RAF when paused, reuses a single WebGL context w
   expect(initialStats!.gpuGeometries).toBeGreaterThan(0)
 
   // 2. Switch to 360° Showcase (Sneaker = 13 model layers + 3 stage meshes + 1 starfield = 17 geometries)
-  //    and verify pausing auto-rotate stops requestAnimationFrame completely (0 idle frames).
+  //    and capture an autoRotate=true snippet first, then verify manual pause stops RAF completely.
   await page.getByRole('button', { name: /مستعرض ومخصّص 360°/ }).click()
   const sneakerBaselineGeos = (await readStats())!.gpuGeometries
-  expect(sneakerBaselineGeos).toBeGreaterThanOrEqual(16)
+  expect(sneakerBaselineGeos).toBe(17)
+
+  await page.getByRole('button', { name: 'زجاجي لامع' }).click()
+  await page.getByRole('button', { name: 'اللون: بنفسجي Celia' }).click()
+  await page.getByRole('button', { name: 'نسخ كود Three.js' }).click()
+  const autoRotateSnippet = await page.evaluate(() => navigator.clipboard.readText())
+  expect(autoRotateSnippet).toContain("modelGroup.name = 'model-sneaker'")
+  expect(autoRotateSnippet).toContain('prefers-reduced-motion: reduce')
+  expect(autoRotateSnippet).toContain('requestAnimationFrame(renderFrame)')
 
   await page.getByRole('button', { name: 'إيقاف الدوران التلقائي' }).click()
   await expect(stage).toHaveAttribute('data-render-state', 'idle')
@@ -356,8 +364,19 @@ test('Three.js runtime suspends RAF when paused, reuses a single WebGL context w
   await page.waitForTimeout(180)
   expect((await readStats())!.frames).toBe(pausedStats.frames + 1)
 
-  // 4. Rapidly cycle models, swatches, materials and modes: must reuse the same WebGLRenderer
-  //    and return to the exact baseline GPU geometry count with zero leaks.
+  // 4. Resume autoRotate, then enable prefers-reduced-motion: reduce in Chromium:
+  //    live loop must stop immediately, button must disable with explicit label, and UI snippet must switch to renderOnce().
+  await page.getByRole('button', { name: 'تشغيل الدوران التلقائي' }).click()
+  await expect(stage).toHaveAttribute('data-render-state', 'active')
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await expect(stage).toHaveAttribute('data-render-state', 'idle')
+  const reducedBtn = page.getByRole('button', { name: 'الدوران التلقائي متوقف لاحترام تقليل الحركة' })
+  await expect(reducedBtn).toBeDisabled()
+  await expect(reducedBtn).toHaveAttribute('aria-pressed', 'false')
+  await expect(page.getByLabel('كود Three.js المولّد')).toContainText('renderOnce()')
+
+  // 5. Rapidly cycle models, swatches, materials and modes: must reuse the same WebGLRenderer
+  //    and return to the exact baseline GPU geometry count (17) with zero leaks.
   await page.getByRole('button', { name: /نواة Celia الذكية/ }).click()
   await page.getByRole('button', { name: 'زجاجي لامع' }).click()
   await page.getByRole('button', { name: /بلّورة متعدّدة الأوجه/ }).click()
@@ -371,13 +390,8 @@ test('Three.js runtime suspends RAF when paused, reuses a single WebGL context w
   const afterSwaps = (await readStats())!
   expect(afterSwaps.rendererMounts).toBe(initialStats!.rendererMounts)
   expect(afterSwaps.sceneSwaps).toBeGreaterThanOrEqual(8)
-  expect(afterSwaps.gpuGeometries).toBe(sneakerBaselineGeos)
+  expect(afterSwaps.gpuGeometries).toBe(17)
   expect(afterSwaps.loopActive).toBe(false)
-
-  // 5. Copy the generated Three.js snippet (Sneaker + Glass + Paused) and verify clean GPU unmount.
-  await page.getByRole('button', { name: 'نسخ كود Three.js' }).click()
-  const copiedSnippet = await page.evaluate(() => navigator.clipboard.readText())
-  expect(copiedSnippet).toContain("modelGroup.name = 'model-sneaker'")
 
   await page.getByRole('button', { name: 'نظرة عامة', exact: true }).click()
   await expect(page.getByRole('heading', { level: 1 })).toContainText('أدوات صغيرة')
@@ -386,7 +400,8 @@ test('Three.js runtime suspends RAF when paused, reuses a single WebGL context w
   )
   expect(unmountSnapshot).toEqual({ gpuGeometries: 0, gpuTextures: 0 })
 
-  // 6. Execute the verbatim copied ES module in Chromium against three@0.187.0 (zero eval).
+  // 6. Execute the autoRotate=true exported ES module in Chromium while prefers-reduced-motion: reduce
+  //    is active — proving the exported snippet itself suppresses RAF (frame stays 1 after 200ms).
   const threeModuleJs = readFileSync('node_modules/three/build/three.module.js', 'utf8')
   const threeCoreJs = readFileSync('node_modules/three/build/three.core.js', 'utf8')
   await page.route(/^https:\/\/three-export-sandbox\.example\//, async (route) => {
@@ -414,7 +429,7 @@ test('Three.js runtime suspends RAF when paused, reuses a single WebGL context w
       return
     }
     if (pathname === '/exported-scene.js') {
-      await route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: copiedSnippet })
+      await route.fulfill({ status: 200, contentType: 'text/javascript; charset=utf-8', body: autoRotateSnippet })
       return
     }
     await route.fulfill({ status: 404, body: 'not found' })

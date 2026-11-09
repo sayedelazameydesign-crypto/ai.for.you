@@ -349,10 +349,14 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); opacity: 1
   color: #e6e4fa;
   background-color: transparent;
 }
-.space-cam-btn:hover,
+.space-cam-btn:not(:disabled):hover,
 .space-cam-btn[aria-pressed='true'] {
   background-color: #2c315c;
   color: #ffffff;
+}
+.space-cam-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 .space-fallback-card {
   position: relative;

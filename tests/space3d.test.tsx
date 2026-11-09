@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import * as THREE from 'three'
 import {
@@ -308,6 +308,87 @@ describe('Three.js scene builders, raycasting, disposal and code generation', ()
     expect(queue.size).toBe(0)
     expect(stateHistory.at(-1)).toBe(false)
   })
+
+  it('suppresses requestAnimationFrame in exported code when prefers-reduced-motion is active even if autoRotate is true', () => {
+    const originalMatchMedia = window.matchMedia
+    let reduced = true
+    const changeListeners = new Set<(event: { matches: boolean }) => void>()
+
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      value: vi.fn((query: string) => ({
+        matches: query.includes('prefers-reduced-motion') ? reduced : false,
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn((type: string, cb: (event: { matches: boolean }) => void) => {
+          if (type === 'change') changeListeners.add(cb)
+        }),
+        removeEventListener: vi.fn((type: string, cb: (event: { matches: boolean }) => void) => {
+          if (type === 'change') changeListeners.delete(cb)
+        }),
+        dispatchEvent: vi.fn(),
+      })),
+    })
+
+    try {
+      const code = buildThreeCodeSnippet({
+        model: 'pod',
+        swatch: 'electric',
+        material: 'studio',
+        autoRotate: true,
+      })
+      expect(code).toContain("prefers-reduced-motion: reduce")
+
+      let rafCalls = 0
+      let cafCalls = 0
+      let renderCalls = 0
+      const FakeTHREE = {
+        ...THREE,
+        WebGLRenderer: class {
+          domElement = document.createElement('canvas')
+          setPixelRatio() {}
+          setSize() {}
+          render() { renderCalls += 1 }
+        },
+      }
+      const executableBody = code
+        .replace(/^import \* as THREE from 'three';\s*/m, '')
+        .replace(/export \{ scene, root, subjectGroup, modelGroup, camera, renderer \};\s*$/m, 'return { scene, root, subjectGroup, modelGroup, camera, renderer };')
+
+      const runner = new Function('THREE', 'requestAnimationFrame', 'cancelAnimationFrame', executableBody) as (
+        threeNs: typeof FakeTHREE,
+        raf: (cb: FrameRequestCallback) => number,
+        caf: (id: number) => void,
+      ) => { scene: Scene; root: Group; subjectGroup: Group }
+
+      const exported = runner(
+        FakeTHREE,
+        () => { rafCalls += 1; return rafCalls },
+        () => { cafCalls += 1 },
+      )
+
+      // Even though config.autoRotate was true, reduced-motion prevents scheduling RAF.
+      expect(renderCalls).toBe(1)
+      expect(rafCalls).toBe(0)
+      expect(exported.subjectGroup.rotation.y).toBe(0)
+
+      // Turning reduced-motion off resumes RAF; turning it back on cancels RAF immediately.
+      reduced = false
+      for (const listener of changeListeners) listener({ matches: false })
+      expect(rafCalls).toBe(1)
+
+      reduced = true
+      for (const listener of changeListeners) listener({ matches: true })
+      expect(cafCalls).toBe(1)
+
+      disposeObject3D(exported.root)
+      exported.scene.clear()
+    } finally {
+      Object.defineProperty(window, 'matchMedia', { writable: true, value: originalMatchMedia })
+    }
+  })
 })
 
 describe('Optional #/space 3D workspace UI & fallback integration', () => {
@@ -360,5 +441,67 @@ describe('Optional #/space 3D workspace UI & fallback integration', () => {
     await user.click(screen.getByRole('button', { name: /ملخّص النصوص.*محفوظات/ }))
     await user.click(screen.getByRole('button', { name: 'انتقل إلى ملخّص النصوص' }))
     expect(window.location.hash).toBe('#/summary')
+  })
+
+  it('disables the auto-rotate toggle with an explicit label and exports a static loop when reduced motion is active', async () => {
+    const originalMatchMedia = window.matchMedia
+    let reduced = true
+    const changeListeners = new Set<() => void>()
+
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      value: vi.fn((query: string) => ({
+        get matches() { return query.includes('prefers-reduced-motion') ? reduced : false },
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn((type: string, cb: () => void) => {
+          if (type === 'change') changeListeners.add(cb)
+        }),
+        removeEventListener: vi.fn((type: string, cb: () => void) => {
+          if (type === 'change') changeListeners.delete(cb)
+        }),
+        dispatchEvent: vi.fn(),
+      })),
+    })
+
+    try {
+      const user = userEvent.setup()
+      window.location.hash = '#/space'
+      render(<App />)
+
+      expect(await screen.findByRole('heading', { level: 1, name: 'مساحتك في أبعاد ثلاثة.' })).toBeTruthy()
+
+      const rotateBtn = screen.getByRole('button', { name: 'الدوران التلقائي متوقف لاحترام تقليل الحركة' })
+      expect((rotateBtn as HTMLButtonElement).disabled).toBe(true)
+      expect(rotateBtn.getAttribute('aria-pressed')).toBe('false')
+
+      await user.click(screen.getByRole('button', { name: /مستعرض ومخصّص 360°/ }))
+      await user.click(rotateBtn)
+
+      // Clicking the disabled button cannot re-enable autoRotate or inject a continuous RAF loop.
+      const codePre = screen.getByLabelText('كود Three.js المولّد')
+      expect(codePre.textContent).toContain('renderOnce()')
+      expect(codePre.textContent).not.toContain('requestAnimationFrame(renderFrame)')
+
+      // Clearing prefers-reduced-motion re-enables the toggle cleanly with its actionable label.
+      act(() => {
+        reduced = false
+        for (const listener of changeListeners) listener()
+      })
+
+      const enabledBtn = screen.getByRole('button', { name: 'تشغيل الدوران التلقائي' })
+      expect((enabledBtn as HTMLButtonElement).disabled).toBe(false)
+      expect(enabledBtn.getAttribute('aria-pressed')).toBe('false')
+
+      await user.click(enabledBtn)
+      const activeBtn = screen.getByRole('button', { name: 'إيقاف الدوران التلقائي' })
+      expect(activeBtn.getAttribute('aria-pressed')).toBe('true')
+      expect(codePre.textContent).toContain('prefers-reduced-motion: reduce')
+      expect(codePre.textContent).toContain('requestAnimationFrame(renderFrame)')
+    } finally {
+      Object.defineProperty(window, 'matchMedia', { writable: true, value: originalMatchMedia })
+    }
   })
 })
