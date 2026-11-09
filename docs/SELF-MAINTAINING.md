@@ -73,7 +73,7 @@ PAGE_URL=https://… API_BASE=https://… npm run report:maintenance
 | `PASS` | `tests` | `coverage thresholds` | `statements=74.61% (thresholds enforced)` |
 | `PASS` | `dependencies` | `high-severity audit` | `no high or critical advisories` (أو `FAIL: reason=network_error (...)` عند انقطاع السجل) |
 | `PASS` | `dependencies` | `outdated packages` | `4 package(s) behind (0 routine, 4 major/range-pinned); reported, never auto-applied` |
-| `PASS` | `documentation` | `drift guard` | `docs_guard=passed markdown=16 links=17 limits=5 error_codes=15` |
+| `PASS` | `documentation` | `drift guard` | `docs_guard=passed markdown=16 links=18 limits=5 error_codes=15` |
 | `PASS` | `security` | `quota SQL policy` | `sql_check=passed files=1` (يشغّل `scripts/check-sql.mjs` فعليًا) |
 | `PASS` | `security` | `committed secret scan` | `secret_guard=passed` |
 | `PASS` | `code quality` | `build output assertions` | `build_check=passed files=46 size_mb=2.13 pages_limit_mb=1024` (أو `NOT RUN` قبل `npm run build`) |
@@ -157,13 +157,13 @@ npm run agent:dry       # يعرض التصنيف الفعلي للحزم الم
 | 8 نوفمبر 2026 | `maintenance-report.yml` (`workflow_dispatch` على `main`) | `42529354539` | **نجح (`PASS`)** | إثبات مسار التقرير اليدوي على `main` |
 | 8 نوفمبر 2026 | `maintenance-agent.yml` (`workflow_dispatch` مع `apply` على `main`) | `42529563821` | **فشل عند `Propose` (`exit 1`)** وفتح التذكرة **#11** | رفض `maintenance-agent.mjs` العمل مباشرةً على `main` (`reason=protected_branch`) ولم يُدمج أو يُنشر شيء |
 | 9 نوفمبر 2026 | `maintenance-report.yml` (**`schedule` تلقائي** على `main`) | `42621538980` | **نجح (`PASS` في `39s`)** ورفع أثر `maintenance-report` | إثبات اشتغال الجدولة الأسبوعية الفعلية على الفرع الافتراضي (إغلاق `G11`) |
-| 9 نوفمبر 2026 | `maintenance-agent.yml` (**`schedule` تلقائي** على `main`) | `42624824040` | **فشل عند `Propose routine updates` (`exit 1` في `24s`)** وأضاف تعليقًا على التذكرة **#11** | نجحت خطوتا `agent-guards` و`--dry-run` (`routine=0`)، لكن استدعاء `--apply` فوق استنساخ `main` اصطدم بحاجز `protected_branch` في السطر `80` قبل فحص `routine.length === 0` وقبل إنشاء فرع `maintenance/...` |
+| 9 نوفمبر 2026 | `maintenance-agent.yml` (**`schedule` تلقائي** على `main`) | `42624824040` | **فشل عند `Propose routine updates` (`exit 1` في `24s`)** وأضاف تعليقًا على التذكرة **#11** | نجحت خطوتا `agent-guards` و`--dry-run` (`routine=0`)، لكن استدعاء `--apply` فوق استنساخ `main` اصطدم بحاجز `protected_branch` في السطر `79` قبل فحص `routine.length` في السطر `218` وقبل تفريع الصيانة في السطر `232` |
 
 ### العارض المفتوح في `maintenance-agent` (مُشخَّص وغير مُدَّعى إصلاحه في هذه الدفعة)
 
 التشغيل المجدول `42624824040` والتذكرة المفتوحة **#11** يكشفان تعارضًا هيكليًا واضحًا بين `.github/workflows/maintenance-agent.yml` و`scripts/maintenance-agent.mjs`:
 1. سير العمل المجدول في GitHub Actions يستنسخ الفرع الافتراضي `main` حتمًا، ثم يشغّل `node scripts/maintenance-agent.mjs --apply`.
-2. يفحص `scripts/maintenance-agent.mjs` في السطر `80` الشرط `if (APPLY && PROTECTED.has(branch)) done(1)` **قبل** الوصول إلى فحص عدم وجود تحديثات روتينية (`if (!routine.length) done(0)` في السطر `223`) و**قبل** تفريع `git checkout -B maintenance/routine-dependencies-...` (السطر `236`).
+2. يفحص `scripts/maintenance-agent.mjs` في السطر `79` الشرط `if (APPLY && PROTECTED.has(branch))` (وينهي التنفيذ بـ `done(1)` في السطر `82`) **قبل** الوصول إلى فحص عدم وجود تحديثات روتينية `if (!routine.length)` في السطر `218` و**قبل** إنشاء فرع الصيانة `run('git', ['checkout', '-B', PROPOSAL_BRANCH])` في السطر `232`.
 3. النتيجة الحالية: كل تشغيل مجدول للوكيل على `main` يفشل حتمًا بالرمز `1` ويعلّق على التذكرة **#11** حتى عندما تكون التحديثات الروتينية صفرًا. أُبقي `scripts/maintenance-agent.mjs` دون تعديل في هذه الدفعة عمدًا لعزل النطاق، ويُسجَّل هذا الخلل صراحةً كبند مفتوح (`G12`) إلى أن يُعالج في دفعة مخصّصة.
 
 ## 8.5 ما أُثبت فعليًا وما لا يزال غير مُثبت
