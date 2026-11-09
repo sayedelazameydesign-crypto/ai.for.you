@@ -150,9 +150,15 @@ export function Space() {
   const activeNode = nodes.find((item) => item.id === selectedNodeId) ?? nodes[0]
   const activeSwatch = getSwatchMeta(swatch)
   const activeModel = getModelMeta(model)
+  const effectiveAutoRotate = autoRotate && !reducedMotion
+  const rotateButtonLabel = reducedMotion
+    ? 'الدوران التلقائي متوقف لاحترام تقليل الحركة'
+    : effectiveAutoRotate
+      ? 'إيقاف الدوران التلقائي'
+      : 'تشغيل الدوران التلقائي'
   const codeSnippet = useMemo(
-    () => buildThreeCodeSnippet({ model, swatch, material, autoRotate }),
-    [model, swatch, material, autoRotate],
+    () => buildThreeCodeSnippet({ model, swatch, material, autoRotate: effectiveAutoRotate }),
+    [model, swatch, material, effectiveAutoRotate],
   )
 
   const stageRef = useRef<SpaceStageElement>(null)
@@ -508,12 +514,15 @@ export function Space() {
               <button
                 type="button"
                 className="space-cam-btn"
-                aria-pressed={autoRotate && !reducedMotion}
-                aria-label={autoRotate ? 'إيقاف الدوران التلقائي' : 'تشغيل الدوران التلقائي'}
-                title={autoRotate ? 'إيقاف الدوران التلقائي' : 'تشغيل الدوران التلقائي'}
-                onClick={() => setAutoRotate((prev) => !prev)}
+                disabled={reducedMotion}
+                aria-pressed={effectiveAutoRotate}
+                aria-label={rotateButtonLabel}
+                title={rotateButtonLabel}
+                onClick={() => {
+                  if (!reducedMotion) setAutoRotate((prev) => !prev)
+                }}
               >
-                {autoRotate && !reducedMotion ? <Pause size={15} /> : <Play size={15} />}
+                {effectiveAutoRotate ? <Pause size={15} /> : <Play size={15} />}
               </button>
               <button
                 type="button"

@@ -1193,26 +1193,57 @@ export function buildThreeCodeSnippet(config: ShowcaseConfig): string {
   const modelBlock = buildExportedModelBlock(config.model, swatch)
 
   const loopBlock = config.autoRotate
-    ? `let rafId = 0;
+    ? `const motionQuery = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+  ? window.matchMedia('(prefers-reduced-motion: reduce)')
+  : null;
+let reducedMotion = Boolean(motionQuery?.matches);
+let rafId = 0;
 let elapsedSec = 0;
 let lastTickMs = performance.now();
+
+function shouldAnimate() {
+  return !reducedMotion && !document.hidden;
+}
+
+function stopLoop() {
+  if (rafId !== 0) {
+    cancelAnimationFrame(rafId);
+    rafId = 0;
+  }
+}
 
 function renderFrame(now = performance.now()) {
   rafId = 0;
   if (document.hidden) return;
-  elapsedSec += Math.min(Math.max(0, (now - lastTickMs) / 1000), 0.1);
-  lastTickMs = now;
-  subjectGroup.rotation.y = elapsedSec * 0.62;
-  subjectGroup.position.y = Math.sin(elapsedSec * 1.8) * 0.07;
-  turntableRingOuter.scale.setScalar(1 + Math.sin(elapsedSec * 2.2) * 0.025);
+  if (shouldAnimate()) {
+    elapsedSec += Math.min(Math.max(0, (now - lastTickMs) / 1000), 0.1);
+    lastTickMs = now;
+    subjectGroup.rotation.y = elapsedSec * 0.62;
+    subjectGroup.position.y = Math.sin(elapsedSec * 1.8) * 0.07;
+    turntableRingOuter.scale.setScalar(1 + Math.sin(elapsedSec * 2.2) * 0.025);
+  }
   renderer.render(scene, camera);
-  rafId = requestAnimationFrame(renderFrame);
+  if (shouldAnimate()) {
+    rafId = requestAnimationFrame(renderFrame);
+  }
 }
 
+motionQuery?.addEventListener?.('change', (event) => {
+  reducedMotion = event.matches;
+  if (!shouldAnimate()) {
+    stopLoop();
+  } else if (rafId === 0) {
+    lastTickMs = performance.now();
+    rafId = requestAnimationFrame(renderFrame);
+  }
+});
+
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) {
-    cancelAnimationFrame(rafId);
-    rafId = 0;
+  if (!shouldAnimate()) {
+    stopLoop();
+    if (!document.hidden) {
+      renderer.render(scene, camera);
+    }
   } else if (rafId === 0) {
     lastTickMs = performance.now();
     rafId = requestAnimationFrame(renderFrame);
@@ -1223,6 +1254,7 @@ window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  if (!shouldAnimate() && !document.hidden) renderer.render(scene, camera);
 });
 
 renderFrame();`
