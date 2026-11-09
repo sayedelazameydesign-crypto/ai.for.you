@@ -79,10 +79,13 @@ const log = (line) => console.log(line)
 const done = (code) => process.exit(code)
 const firstLine = (text) => String(text ?? '').split('\n').find(Boolean) ?? ''
 
-const run = (command, cmdArgs) => {
+const DEFAULT_GIT_NAME = 'github-actions[bot]'
+const DEFAULT_GIT_EMAIL = '41898282+github-actions[bot]@users.noreply.github.com'
+
+const run = (command, cmdArgs, extraEnv) => {
   const result = spawnSync(command, cmdArgs, {
     encoding: 'utf8',
-    env: process.env,
+    env: extraEnv ? { ...process.env, ...extraEnv } : process.env,
     maxBuffer: 32 * 1024 * 1024,
   })
   const stdout = (result.stdout ?? '').trim()
@@ -138,6 +141,17 @@ function validateProposalBranch(candidate, operation = 'branch') {
   return normalized
 }
 
+function resolveCommitEnv() {
+  const configuredName = run('git', ['config', '--get', 'user.name']).stdout
+  const configuredEmail = run('git', ['config', '--get', 'user.email']).stdout
+  return {
+    GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME || configuredName || DEFAULT_GIT_NAME,
+    GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL || configuredEmail || DEFAULT_GIT_EMAIL,
+    GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME || configuredName || DEFAULT_GIT_NAME,
+    GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || configuredEmail || DEFAULT_GIT_EMAIL,
+  }
+}
+
 /**
  * Structural git write firewall: intercepts `git commit` and `git push` before
  * `spawnSync` so no code path can ever commit on or push to `main`/`master`.
@@ -151,6 +165,7 @@ function runGit(gitArgs) {
       log('Refusing to commit on a protected or non-maintenance branch.')
       done(1)
     }
+    return run('git', gitArgs, resolveCommitEnv())
   }
   if (subcommand === 'push') {
     const positional = gitArgs.slice(1).filter((arg) => !arg.startsWith('-'))

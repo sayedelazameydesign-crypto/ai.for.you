@@ -64,6 +64,10 @@ jobs:
         if: github.event_name == 'schedule' || github.event.inputs.apply == 'true'
         env:
           APPLY: 'true'
+          GIT_AUTHOR_NAME: 'github-actions[bot]'
+          GIT_AUTHOR_EMAIL: '41898282+github-actions[bot]@users.noreply.github.com'
+          GIT_COMMITTER_NAME: 'github-actions[bot]'
+          GIT_COMMITTER_EMAIL: '41898282+github-actions[bot]@users.noreply.github.com'
         run: |
           BASE_SHA="$(git rev-parse HEAD)"
           MAIN_SHA="$(git rev-parse --verify --quiet refs/heads/main || true)"

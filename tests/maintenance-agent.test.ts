@@ -151,17 +151,22 @@ function createIsolatedMainCheckout(options?: {
 
 function installNpmShim(workDir: string, scriptSource: string): NodeJS.ProcessEnv {
   const binDir = join(workDir, 'bin')
+  const emptyHome = join(workDir, '..', 'empty-home')
   mkdirSync(binDir, { recursive: true })
+  mkdirSync(emptyHome, { recursive: true })
   const shimPath = join(binDir, 'npm')
   writeFileSync(shimPath, `#!/usr/bin/env node\n${scriptSource}\n`, 'utf8')
   chmodSync(shimPath, 0o755)
+  const cleanEnv: NodeJS.ProcessEnv = { ...process.env }
+  delete cleanEnv.GIT_AUTHOR_NAME
+  delete cleanEnv.GIT_AUTHOR_EMAIL
+  delete cleanEnv.GIT_COMMITTER_NAME
+  delete cleanEnv.GIT_COMMITTER_EMAIL
   return {
-    ...process.env,
+    ...cleanEnv,
+    HOME: emptyHome,
+    GIT_CONFIG_NOSYSTEM: '1',
     PATH: `${binDir}:${process.env.PATH ?? ''}`,
-    GIT_AUTHOR_NAME: 'Celia Agent',
-    GIT_AUTHOR_EMAIL: 'agent@celia.invalid',
-    GIT_COMMITTER_NAME: 'Celia Agent',
-    GIT_COMMITTER_EMAIL: 'agent@celia.invalid',
   }
 }
 

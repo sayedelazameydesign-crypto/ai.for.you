@@ -32,7 +32,7 @@ const runDryInRepo = () => {
     try {
       spawnSync('git', ['init', '-b', 'main'], { cwd: dir, encoding: 'utf8' })
       mkdirSync(join(dir, 'node_modules', 'vite'), { recursive: true })
-      writeFileSync(join(dir, '.gitignore'), 'node_modules/\nbin/\n')
+      writeFileSync(join(dir, '.gitignore'), 'node_modules/\nbin/\n.empty-home/\n')
       writeFileSync(join(dir, 'package.json'), JSON.stringify({
         name: 'guard-main-fixture',
         version: '0.1.0',
@@ -56,17 +56,22 @@ const runDryInRepo = () => {
 
   const makeNpmShim = (dir, scriptBody) => {
     const binDir = join(dir, 'bin')
+    const emptyHome = join(dir, '.empty-home')
     mkdirSync(binDir, { recursive: true })
+    mkdirSync(emptyHome, { recursive: true })
     const shim = join(binDir, 'npm')
     writeFileSync(shim, `#!/usr/bin/env node\n${scriptBody}\n`)
     chmodSync(shim, 0o755)
+    const cleanEnv = { ...process.env }
+    delete cleanEnv.GIT_AUTHOR_NAME
+    delete cleanEnv.GIT_AUTHOR_EMAIL
+    delete cleanEnv.GIT_COMMITTER_NAME
+    delete cleanEnv.GIT_COMMITTER_EMAIL
     return {
-      ...process.env,
+      ...cleanEnv,
+      HOME: emptyHome,
+      GIT_CONFIG_NOSYSTEM: '1',
       PATH: `${binDir}:${process.env.PATH ?? ''}`,
-      GIT_AUTHOR_NAME: 'test',
-      GIT_AUTHOR_EMAIL: 'test@example.invalid',
-      GIT_COMMITTER_NAME: 'test',
-      GIT_COMMITTER_EMAIL: 'test@example.invalid',
     }
   }
 

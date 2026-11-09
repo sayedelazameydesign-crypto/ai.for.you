@@ -103,7 +103,7 @@ PAGE_URL=https://… API_BASE=https://… npm run report:maintenance
 
 | الحاجز | التنفيذ | الإثبات |
 | --- | --- | --- |
-| لا التزام ولا دفع إلى `main` | جدار حماية هيكلي في `runGit()` (السطر `145`) ووضع `--push` المحروس (السطر `228`) مع مطابقة بصمة `refs/heads/main` قبل التنفيذ وبعده | `3` فحوص مستودعات معزولة في `agent-guards.mjs` + `tests/maintenance-agent.test.ts` |
+| لا التزام ولا دفع إلى `main` | جدار حماية هيكلي في `runGit()` (السطر `159`) ووضع `--push` المحروس (السطر `243`) مع مطابقة بصمة `refs/heads/main` قبل التنفيذ وبعده | `3` فحوص مستودعات معزولة في `agent-guards.mjs` + `tests/maintenance-agent.test.ts` |
 | لا دمج | السكربت والـ workflow لا يملكان خطوة دمج أصلًا | فحص `dry run never claims a merge` |
 | مسارات مسموحة فقط (متتبَّعة وغير متتبَّعة) | `ALLOWED_PATHS` = `package.json`, `package-lock.json`, `CHANGELOG.md`، مع قائمة `DENY` صريحة وتراجع كامل عند المخالفة | `7` حالات مسارات معادية في `agent-guards.mjs` + اختبار ملف غير متتبَّع في `tests/maintenance-agent.test.ts` |
 | لا أسرار في الفرق | `3` قواعد أنماط على محتوى الملفات المعدّلة | `4` حالات اختبار في `agent-guards.mjs` |
@@ -162,9 +162,9 @@ npm run agent:dry       # يعرض التصنيف الفعلي للحزم الم
 ### معالجة تعارض `protected_branch` في `maintenance-agent` (المرحلة `P1` — `G12`)
 
 كشف التشغيل المجدول `42624824040` والتذكرة المفتوحة **#11** تعارضين متكاملين بين `.github/workflows/maintenance-agent.yml` والنسخة السابقة من `scripts/maintenance-agent.mjs`، وعُولجا معًا في هذه الدفعة:
-1. **الخروج النظيف `NOOP` عند غياب التحديثات الروتينية:** ينفّذ `scripts/maintenance-agent.mjs` مرحلة المراقبة القرائية أولًا، فإذا كانت `routine.length === 0` (السطر `422`) يخرج بالرمز `0` (`agent=noop reason=no_routine_updates_available`) حتى عند وجود `HEAD` على `main`، دون إنشاء فرع أو التزام أو PR، ويتعامل `.github/workflows/maintenance-agent.yml` مع `decision=noop` بتخطي خطوة فتح PR دون عدّ بقاء `HEAD` على `main` خطأً.
-2. **العزل الإلزامي والتراجع عند وجود تحديثات روتينية:** عند `routine.length > 0` يتحقق الوكيل من نظافة شجرة العمل (`assertCleanWorkingTree` في السطر `213`)، وينشئ/يعيد ضبط فرع `maintenance/routine-dependencies-YYYY-MM-DD` من نقطة الأساس الصحيحة (`runGit(['checkout', '-B', PROPOSAL_BRANCH, baseCommit])` في السطر `451`)، ويتراجع بالكامل عبر `rollbackProposalBranch()` (السطر `458`) عند فشل التحديث أو مخالفة المسارات/الأسرار أو فشل `npm run check`.
-3. **منع `commit` و`push` على `main` هيكليًا:** يحرس `runGit()` (السطر `145`) ووضع `--push` (السطر `228`) كل أمر Git كتابي، ويربط الدفع بعقد إيجار صريح `--force-with-lease=refs/heads/<branch>:<remoteSha>` متوافق مع الاستنساخ الضحل لـ `actions/checkout`، مع التحقق من ثبات `refs/heads/main` محليًا وعلى `origin`.
+1. **الخروج النظيف `NOOP` عند غياب التحديثات الروتينية:** ينفّذ `scripts/maintenance-agent.mjs` مرحلة المراقبة القرائية أولًا، فإذا كانت `routine.length === 0` (السطر `437`) يخرج بالرمز `0` (`agent=noop reason=no_routine_updates_available`) حتى عند وجود `HEAD` على `main`، دون إنشاء فرع أو التزام أو PR، ويتعامل `.github/workflows/maintenance-agent.yml` مع `decision=noop` بتخطي خطوة فتح PR دون عدّ بقاء `HEAD` على `main` خطأً.
+2. **العزل الإلزامي والتراجع عند وجود تحديثات روتينية:** عند `routine.length > 0` يتحقق الوكيل من نظافة شجرة العمل (`assertCleanWorkingTree` في السطر `228`)، وينشئ/يعيد ضبط فرع `maintenance/routine-dependencies-YYYY-MM-DD` من نقطة الأساس الصحيحة (`runGit(['checkout', '-B', PROPOSAL_BRANCH, baseCommit])` في السطر `466`) مع هوية التزام آمنة افتراضية عند غياب `user.name`/`user.email` على العدّاء، ويتراجع بالكامل عبر `rollbackProposalBranch()` (السطر `473`) عند فشل التحديث أو مخالفة المسارات/الأسرار أو فشل `npm run check`.
+3. **منع `commit` و`push` على `main` هيكليًا:** يحرس `runGit()` (السطر `159`) ووضع `--push` (السطر `243`) كل أمر Git كتابي، ويربط الدفع بعقد إيجار صريح `--force-with-lease=refs/heads/<branch>:<remoteSha>` متوافق مع الاستنساخ الضحل لـ `actions/checkout`، مع التحقق من ثبات `refs/heads/main` محليًا وعلى `origin`.
 4. **حدود الإثبات:** لا تُغلق التذكرة **#11** قبل دمج هذا الإصلاح في `main` وإثبات نجاح مسار `maintenance-agent.yml` تشغيليًا على `main`.
 
 ## 8.5 ما أُثبت فعليًا وما لا يزال غير مُثبت
