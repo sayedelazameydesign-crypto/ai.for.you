@@ -29,7 +29,7 @@
  *   node scripts/maintenance-agent.mjs --apply
  */
 import { execFileSync, spawnSync } from 'node:child_process'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 
 const APPLY = process.argv.includes('--apply')
 const DRY = !APPLY
@@ -53,7 +53,9 @@ const DENY = [
 
 const run = (command, args) => {
   const result = spawnSync(command, args, { encoding: 'utf8', env: process.env, maxBuffer: 32 * 1024 * 1024 })
-  return { ok: result.status === 0, output: `${result.stdout ?? ''}${result.stderr ?? ''}`.trim(), status: result.status ?? -1 }
+  const stdout = (result.stdout ?? '').trim()
+  const stderr = (result.stderr ?? '').trim()
+  return { ok: result.status === 0, stdout, stderr, output: `${stdout}\n${stderr}`.trim(), status: result.status ?? -1 }
 }
 
 const log = (line) => console.log(line)
@@ -127,27 +129,67 @@ if (!pkgBefore) {
   done(0)
 }
 
-const outdated = run('npm', ['outdated', '--json', '--long'])
-const parsed = (() => {
-  try { return JSON.parse(outdated.output) || {} } catch { return {} }
+const pkgManifest = (() => {
+  try { return JSON.parse(pkgBefore) } catch { return null }
 })()
+if (!pkgManifest || typeof pkgManifest !== 'object') {
+  log('agent=blocked reason=invalid_package_json')
+  done(1)
+}
+
+const declaredDeps = Object.keys({ ...pkgManifest.dependencies, ...pkgManifest.devDependencies })
+if (declaredDeps.length > 0 && !existsSync('node_modules')) {
+  log('agent=blocked reason=missing_node_modules')
+  log('Refusing to classify outdated packages without node_modules. Run npm ci before invoking the maintenance agent.')
+  done(1)
+}
+
+const outdated = run('npm', ['outdated', '--json', '--long'])
+if (!outdated.stdout && outdated.status !== 0) {
+  log(`agent=blocked reason=outdated_query_failed status=${outdated.status}`)
+  if (outdated.stderr) log(outdated.stderr.split('\n')[0])
+  done(1)
+}
+
+const parsed = (() => {
+  if (!outdated.stdout) return {}
+  try { return JSON.parse(outdated.stdout) } catch { return null }
+})()
+
+if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+  log('agent=blocked reason=outdated_parse_failed')
+  done(1)
+}
+
+if ('error' in parsed && parsed.error && typeof parsed.error === 'object') {
+  const code = String(parsed.error.code ?? 'unknown')
+  const summary = String(parsed.error.summary ?? '').split('\n')[0]
+  log(`agent=blocked reason=npm_outdated_error code=${code}`)
+  if (summary) log(summary)
+  done(1)
+}
 
 /** Patch and minor only. A major is a human decision by policy, not by omission. */
 const semver = /^\d+\.\d+\.\d+/
 const majorOf = (version) => String(version ?? '').split('.')[0]
 
+const missingCurrent = []
 const routine = []
 const majors = []
 const satisfied = []
 
 // Classification must be exhaustive: every outdated package lands in exactly one
-// bucket and is printed. An earlier version `continue`d when the wanted version
-// already matched the installed one, which silently dropped a major available
-// only outside the declared range — `typescript` 5.9.3 with wanted 5.9.3 and
-// latest 7.0.2 vanished from the report while the docs said majors are recorded.
+// bucket and is printed. An earlier version `continue`d when `current` was absent
+// (for example when `node_modules` was missing or incomplete) or when `npm`
+// returned `{ "error": { "code": "ENEEDAUTH" } }`, silently pretending zero
+// updates existed. Missing `current` now halts execution explicitly.
 for (const [name, info] of Object.entries(parsed)) {
   const { current, wanted } = info ?? {}
-  if (!semver.test(current ?? '')) continue
+  if (typeof current !== 'string' || !current.trim()) {
+    missingCurrent.push(name)
+    continue
+  }
+  if (!semver.test(current)) continue
   if (majorOf(current) !== majorOf(wanted ?? current)) {
     // A major that npm would install inside the declared range is still human work.
     majors.push([name, info])
@@ -160,6 +202,12 @@ for (const [name, info] of Object.entries(parsed)) {
     continue
   }
   routine.push([name, info])
+}
+
+if (missingCurrent.length) {
+  log(`agent=blocked reason=missing_installed_version packages=${missingCurrent.join(',')}`)
+  log('Refusing to classify outdated packages when installed "current" versions are missing. Run npm ci first.')
+  done(1)
 }
 
 log(`agent=observe branch=${branch} outdated_total=${Object.keys(parsed).length} routine=${routine.length} major_skipped=${majors.length} range_satisfied=${satisfied.length}`)

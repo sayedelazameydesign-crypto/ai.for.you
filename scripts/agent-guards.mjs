@@ -9,6 +9,11 @@
  * Usage: node scripts/agent-guards.mjs
  */
 import { spawnSync } from 'node:child_process'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+
+const SCRIPT = resolve('scripts/maintenance-agent.mjs')
 
 const cases = []
 const check = (name, condition, detail = '') => cases.push({ name, pass: Boolean(condition), detail })
@@ -106,6 +111,67 @@ console.log(JSON.stringify(buckets))
   check('never drops a semver package without a bucket',
     buckets.filter((b) => b.startsWith('rangePkg')).length === 1 && !buckets.some((b) => b.startsWith('nonSemver')),
     'rangePkg present once, non-semver excluded')
+}
+
+// End-to-end failure-mode guards on the real script: missing `node_modules`,
+// missing `current` in `npm outdated --json`, and missing/rejected npm
+// credentials (`ENEEDAUTH`) must halt loudly instead of pretending 0 updates.
+{
+  const runIsolated = ({ withNodeModules, npmScript }) => {
+    const dir = mkdtempSync(join(tmpdir(), 'celia-agent-guard-'))
+    try {
+      spawnSync('git', ['init', '-b', 'feature/test'], { cwd: dir, encoding: 'utf8' })
+      spawnSync('git', ['-c', 'user.name=test', '-c', 'user.email=test@example.invalid', 'commit', '--allow-empty', '-m', 'init'], { cwd: dir, encoding: 'utf8' })
+      writeFileSync(join(dir, 'package.json'), JSON.stringify({
+        name: 'guard-fixture',
+        version: '0.1.0',
+        dependencies: { vite: '8.3.6' },
+      }))
+      if (withNodeModules) mkdirSync(join(dir, 'node_modules', 'vite'), { recursive: true })
+      let env = { ...process.env }
+      if (npmScript) {
+        const binDir = join(dir, 'bin')
+        mkdirSync(binDir, { recursive: true })
+        const shim = join(binDir, 'npm')
+        writeFileSync(shim, `#!/usr/bin/env node\n${npmScript}\n`)
+        chmodSync(shim, 0o755)
+        env = { ...env, PATH: `${binDir}:${process.env.PATH ?? ''}` }
+      }
+      const res = spawnSync(process.execPath, [SCRIPT, '--dry-run'], { cwd: dir, env, encoding: 'utf8' })
+      return { ok: res.status === 0, status: res.status, out: `${res.stdout ?? ''}\n${res.stderr ?? ''}`.trim() }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+
+  const noNodeModules = runIsolated({ withNodeModules: false })
+  check('halts loudly when node_modules is missing',
+    !noNodeModules.ok && /agent=blocked reason=missing_node_modules/.test(noNodeModules.out),
+    noNodeModules.out.split('\n')[0] ?? '')
+
+  const missingCurrent = runIsolated({
+    withNodeModules: true,
+    npmScript: `process.stdout.write(JSON.stringify({ vite: { wanted: '8.3.6', latest: '8.4.0' } })); process.exit(1)`,
+  })
+  check('halts loudly when npm outdated omits current version',
+    !missingCurrent.ok && /agent=blocked reason=missing_installed_version packages=vite/.test(missingCurrent.out),
+    missingCurrent.out.split('\n')[0] ?? '')
+
+  const authFailure = runIsolated({
+    withNodeModules: true,
+    npmScript: `process.stdout.write(JSON.stringify({ error: { code: 'ENEEDAUTH', summary: 'This command requires you to be logged in.' } })); process.exit(1)`,
+  })
+  check('halts loudly on npm registry credential failure (ENEEDAUTH)',
+    !authFailure.ok && /agent=blocked reason=npm_outdated_error code=ENEEDAUTH/.test(authFailure.out),
+    authFailure.out.split('\n')[0] ?? '')
+
+  const brokenOutdated = runIsolated({
+    withNodeModules: true,
+    npmScript: `process.stderr.write('npm ERR! network failure\\n'); process.exit(1)`,
+  })
+  check('halts loudly when npm outdated fails without JSON',
+    !brokenOutdated.ok && /agent=blocked reason=outdated_query_failed/.test(brokenOutdated.out),
+    brokenOutdated.out.split('\n')[0] ?? '')
 }
 
 

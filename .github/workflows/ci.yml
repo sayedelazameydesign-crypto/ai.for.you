@@ -17,6 +17,20 @@ jobs:
   quality:
     runs-on: ubuntu-latest
     timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_DB: celia_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 127.0.0.1:5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d celia_test"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -32,9 +46,13 @@ jobs:
       # A document that no longer matches the code is a quiet lie. Fail early.
       - name: Reject documentation drift
         run: npm run check:docs
-      # The quota schema is not executed here; its security properties are.
+      # Static assertions + live PostgreSQL 16 behavioural/privilege/concurrency checks.
       - name: Assert quota schema security properties
         run: npm run check:sql
+      - name: Execute quota schema behavioural, privilege and concurrency tests on PostgreSQL 16
+        env:
+          DATABASE_URL: postgres://postgres@127.0.0.1:5432/celia_test
+        run: npm run test:sql -- --require-db
       # Every number this repository publishes must match a measurement.
       - name: Assert published numbers match measurements
         run: npm run check:evidence -- --full

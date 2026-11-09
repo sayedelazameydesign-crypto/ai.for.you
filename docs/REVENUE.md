@@ -59,10 +59,10 @@
 ### المرحلة ب — المصادقة والحصة (هذا المستودع)
 `supabase/migrations/0001_entitlements.sql` منفّذ كنقطة بداية، ويغطي:
 - خطتان: `free` (20 طلبًا) و`pro` (300).
-- عدّاد ذرّي عبر `consume_ai_quota()` — لا يمكن تصديق طلبين متزامنين على الحد.
-- **RLS مفعّل وكتابة مقفلة على المتصفح:** المستخدم يستطيع قراءة حصته، ولا يستطيع رفعها.
+- عدّاد ذرّي معزول في `private.consume_ai_quota()` (تحت قفل صف الحساب `FOR UPDATE` ونافذة متحركة 60 ثانية في `private.ai_rate_events`) مع واجهة عامة محكومة بالملكية `public.consume_own_quota()` (`search_path = ''` وسحب `EXECUTE` من `PUBLIC`).
+- **RLS مفعّل وكتابة مقفلة على المتصفح:** المستخدم يستطيع قراءة حصته، ولا يستطيع رفعها أو استهلاك حصة مستخدم آخر.
 - لا نص مستخدم ولا IP في سجلات الاستخدام.
-- `scripts/check-sql.mjs` يرفض أي تغيير يعيد الكتابة للمتصفح أو يحذف RLS.
+- `scripts/check-sql.mjs` + `scripts/test-sql-postgres.mjs` يرفضان أي تغيير يعيد الكتابة للمتصفح أو يضعف `SECURITY DEFINER` أو يكسر نافذة الدقيقة تحت التزامن.
 
 **ما تبقّى في هذه المرحلة (لم يُنفّذ):** ربط `server/ai.ts` بالمصادقة، واجهة تسجيل الدخول، وترحيل البيانات. الدالة موجودة، والربط لا.
 
@@ -93,7 +93,7 @@ Webhook يحدّث `accounts.plan_id` فقط. المتصفح لا يكتب شي�
 | --- | --- | --- |
 | حساب اقتصاد الوحدة من الكود | **done** | `scripts/unit-economics.mjs` |
 | مخطط الحصص والحسابات | **done (طرح)** | `supabase/migrations/0001_entitlements.sql` |
-| حارس أمني على المخطط | **done** | `scripts/check-sql.mjs` + اختبار سلبي |
+| حارس أمني واختبارات PostgreSQL على المخطط | **done** | `scripts/check-sql.mjs` + `scripts/test-sql-postgres.mjs` + `tests/sql.test.ts` |
 | ربط المصادقة بالخادم | **planned** | `server/ai.ts` ما زال يستخدم رمز وصول مشتركًا |
 | واجهة تسجيل الدخول | **planned** | — |
 | الدفع | **planned** | — |
