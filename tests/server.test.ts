@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { completionBudget, handleRequest, isConfigured, validateRequest, type AIEnvironment } from '../server/ai'
+import { completionBudget, handleRequest, isConfigured, resolveServerEnv, SERVER_ENV_KEYS, validateRequest, type AIEnvironment } from '../server/ai'
 import { marketingExample } from '../src/lib/marketing'
 import { summaryExample } from '../src/lib/summary'
 
@@ -128,6 +128,169 @@ describe('server-only AI configuration', () => {
     setup.env.AI_DAILY_LIMIT = '1'
     expect((await handleRequest(request(), setup, `daily-a-${time}`)).status).toBe(200)
     expect((await handleRequest(request(), setup, `daily-b-${time}`)).status).toBe(429)
+  })
+  it('does not burn the deployment daily ceiling on rejected or misconfigured requests', async () => {
+    time += 86400000
+    const setup = config(marketingResult)
+    setup.env.AI_DAILY_LIMIT = '1'
+
+    const badJson = new Request('https://example.test/api/v1/ai', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-lek-access': env.AI_ACCESS_CODE },
+      body: '{not-valid-json',
+    })
+    expect((await handleRequest(badJson, setup, `rej-json-${time}`)).status).toBe(400)
+
+    const oversized = request({ tool: 'marketing', input: { ...marketingExample, benefit: 'x'.repeat(65000) }, consent: true })
+    expect((await handleRequest(oversized, setup, `rej-size-${time}`)).status).toBe(413)
+
+    const noConsent = request({ tool: 'marketing', input: marketingExample, consent: false })
+    expect((await handleRequest(noConsent, setup, `rej-consent-${time}`)).status).toBe(400)
+
+    const badInput = request({ tool: 'summary', input: { text: 'قصير', language: 'ar', length: 'short' }, consent: true })
+    expect((await handleRequest(badInput, setup, `rej-input-${time}`)).status).toBe(400)
+
+    const badModelSetup = { ...setup, env: { ...setup.env, GROQ_MODEL: 'bad model spaces!' } }
+    expect((await handleRequest(request(), badModelSetup, `rej-model-${time}`)).status).toBe(503)
+    expect(setup.fetcher).not.toHaveBeenCalled()
+
+    // The single daily slot must still be available for a valid request.
+    expect((await handleRequest(request(), setup, `valid-after-rejections-${time}`)).status).toBe(200)
+    expect(setup.fetcher).toHaveBeenCalledOnce()
+    expect((await handleRequest(request(), setup, `second-valid-${time}`)).status).toBe(429)
+  })
+  it('still throttles per-client bursts of invalid requests without starving other clients', async () => {
+    time += 86400000
+    const setup = config(marketingResult)
+    setup.env.AI_DAILY_LIMIT = '1'
+    const attacker = `burst-attacker-${time}`
+    const makeBad = () => new Request('https://example.test/api/v1/ai', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-lek-access': env.AI_ACCESS_CODE },
+      body: '{broken',
+    })
+
+    for (let i = 0; i < 6; i++) {
+      expect((await handleRequest(makeBad(), setup, attacker)).status).toBe(400)
+    }
+    const throttled = await handleRequest(makeBad(), setup, attacker)
+    expect(throttled.status).toBe(429)
+    expect((await throttled.json()).error.code).toBe('rate-limit')
+
+    // Another client can still spend the untouched daily quota slot.
+    expect((await handleRequest(request(), setup, `honest-client-${time}`)).status).toBe(200)
+  })
+  it('does not roll back or erase the new day quota when a slow body finishes after UTC midnight', async () => {
+    const baseMidnight = (Math.floor(time / 86_400_000) + 2) * 86_400_000
+    let clock = baseMidnight - 500
+    const fetcher = vi.fn<typeof fetch>(async () => Response.json({ choices: [{ message: { content: JSON.stringify(marketingResult) } }] }))
+    const sharedSetup: { env: AIEnvironment; fetcher: typeof fetch; now: () => number; sleep: () => Promise<void> } = {
+      env: { ...env, AI_DAILY_LIMIT: '2' },
+      fetcher,
+      now: () => clock,
+      sleep: async () => {},
+    }
+
+    const payload = JSON.stringify({ tool: 'marketing', input: marketingExample, consent: true })
+    const encoder = new TextEncoder()
+    const midpoint = Math.floor(payload.length / 2)
+    let markFirstHalfRead!: () => void
+    const firstHalfRead = new Promise<void>((resolve) => { markFirstHalfRead = resolve })
+    let releaseSecondHalf!: () => void
+    const secondHalfReady = new Promise<void>((resolve) => { releaseSecondHalf = resolve })
+
+    let step = 0
+    const slowBody = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        if (step === 0) {
+          step = 1
+          controller.enqueue(encoder.encode(payload.slice(0, midpoint)))
+          markFirstHalfRead()
+          return
+        }
+        await secondHalfReady
+        controller.enqueue(encoder.encode(payload.slice(midpoint)))
+        controller.close()
+      },
+    })
+    const slowRequest = new Request('https://example.test/api/v1/ai', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-lek-access': env.AI_ACCESS_CODE },
+      body: slowBody,
+      duplex: 'half',
+    } as RequestInit)
+
+    try {
+      // 1. Slow request enters at 23:59:59.500Z and pauses mid-stream inside readBounded().
+      const slowInFlight = handleRequest(slowRequest, sharedSetup, 'midnight-slow-client')
+      await firstHalfRead
+
+      // 2. Clock crosses UTC midnight; a fast request on the new day spends slot 1 of 2.
+      clock = baseMidnight + 1000
+      expect((await handleRequest(request(), sharedSetup, 'new-day-client-1')).status).toBe(200)
+
+      // 3. Slow request finishes streaming at 00:00:01Z and must spend slot 2 of 2 on the new day.
+      releaseSecondHalf()
+      expect((await slowInFlight).status).toBe(200)
+
+      // 4. A third request on the new day must hit the daily ceiling rather than seeing a reset counter.
+      clock = baseMidnight + 2000
+      const third = await handleRequest(request(), sharedSetup, 'new-day-client-2')
+      expect(third.status).toBe(429)
+      expect((await third.json()).error.code).toBe('rate-limit')
+      expect(fetcher).toHaveBeenCalledTimes(2)
+    } finally {
+      time = baseMidnight + 86_400_000
+    }
+  })
+  it('enforces the 280-character X limit on provider output while keeping longer posts elsewhere', async () => {
+    const xInput = { ...marketingExample, platform: 'x' as const }
+    const tooLongForX = { variants: [{ id: 'v1', label: 'منشور', text: 'س'.repeat(281) }] }
+    const rejected = await handleRequest(request({ tool: 'marketing', input: xInput, consent: true }), config(tooLongForX))
+    expect(rejected.status).toBe(502)
+    expect((await rejected.json()).error.code).toBe('output')
+
+    const exactX = { variants: [{ id: 'v1', label: 'منشور', text: 'س'.repeat(280) }] }
+    const acceptedX = await handleRequest(request({ tool: 'marketing', input: xInput, consent: true }), config(exactX))
+    expect(acceptedX.status).toBe(200)
+
+    const longLinkedIn = { variants: [{ id: 'v1', label: 'منشور', text: 'س'.repeat(600) }] }
+    const acceptedLinkedIn = await handleRequest(
+      request({ tool: 'marketing', input: { ...marketingExample, platform: 'linkedin' }, consent: true }),
+      config(longLinkedIn),
+    )
+    expect(acceptedLinkedIn.status).toBe(200)
+  })
+  it('forwards every declared server environment key without leaking client variables', () => {
+    const loaded = {
+      GROQ_API_KEY: 'key-from-dotenv',
+      GROQ_MODEL: '',
+      AI_ACCESS_CODE: 'access-from-dotenv',
+      AI_DAILY_LIMIT: '75',
+      AI_PROVIDER: 'groq',
+      AI_MAX_TOKENS: '2048',
+      AI_ALLOWED_ORIGINS: 'https://celia.sh',
+      AI_TIMEOUT_MS: '15000',
+      AI_TRUSTED_PROXY: 'x-vercel-forwarded-for',
+      VITE_SITE_URL: 'https://celia.sh',
+      UNRELATED_SECRET: 'ignored',
+    }
+    const fallback = { GROQ_MODEL: 'llama-3.3-70b-versatile', AI_MAX_TOKENS: '4096' }
+    const resolved = resolveServerEnv(loaded, fallback)
+    expect(SERVER_ENV_KEYS).toHaveLength(9)
+    expect(resolved).toEqual({
+      GROQ_API_KEY: 'key-from-dotenv',
+      GROQ_MODEL: 'llama-3.3-70b-versatile',
+      AI_ACCESS_CODE: 'access-from-dotenv',
+      AI_DAILY_LIMIT: '75',
+      AI_PROVIDER: 'groq',
+      AI_MAX_TOKENS: '2048',
+      AI_ALLOWED_ORIGINS: 'https://celia.sh',
+      AI_TIMEOUT_MS: '15000',
+      AI_TRUSTED_PROXY: 'x-vercel-forwarded-for',
+    })
+    expect(resolved).not.toHaveProperty('VITE_SITE_URL')
+    expect(resolved).not.toHaveProperty('UNRELATED_SECRET')
   })
 })
 

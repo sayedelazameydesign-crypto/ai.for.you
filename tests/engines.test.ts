@@ -17,10 +17,26 @@ describe('local marketing templates', () => {
     expect(result.variants[0].text).toContain('Get in touch')
     expect(result.variants[0].text).toContain('Nabta')
   })
-  it('keeps every X variant within 280 UTF-16 characters, including hashtags', () => {
-    for (let round = 0; round < 8; round++) {
-      const result = generateMarketing({ ...marketingExample, product: 'ن'.repeat(80), benefit: 'ق'.repeat(400), platform: 'x' }, round)
-      for (const variant of result.variants) expect(variant.text.length).toBeLessThanOrEqual(280)
+  it('preserves Arabic and mixed product names in English hashtags without repeating fallback tokens', () => {
+    const arabicBrandInEnglish = generateMarketing({ ...marketingExample, product: 'نبتة', language: 'en' })
+    for (const variant of arabicBrandInEnglish.variants) {
+      expect(variant.text).toContain('#نبتة #MadeForYou')
+      expect(variant.text).not.toContain('ForYouForYou')
+    }
+    const mixedBrand = generateMarketing({ ...marketingExample, product: 'نبتة Nabta', language: 'en' })
+    expect(mixedBrand.variants[0].text).toContain('#نبتة_Nabta #MadeForYou')
+
+    const symbolOnlyEn = generateMarketing({ ...marketingExample, product: '✨', language: 'en' })
+    expect(symbolOnlyEn.variants[0].text).toContain('#ForYou #MadeForYou')
+    const symbolOnlyAr = generateMarketing({ ...marketingExample, product: '✨', language: 'ar' })
+    expect(symbolOnlyAr.variants[0].text).toContain('#لك #اكتشف_المزيد')
+  })
+  it('keeps every X variant within 280 UTF-16 characters in both languages, including hashtags', () => {
+    for (const language of ['ar', 'en'] as const) {
+      for (let round = 0; round < 8; round++) {
+        const result = generateMarketing({ ...marketingExample, product: 'ن'.repeat(80), benefit: 'ق'.repeat(400), platform: 'x', language }, round)
+        for (const variant of result.variants) expect(variant.text.length).toBeLessThanOrEqual(280)
+      }
     }
   })
   it('changes templates on regeneration and rejects missing fields', () => {

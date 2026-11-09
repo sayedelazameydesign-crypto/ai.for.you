@@ -50,6 +50,18 @@ if (!/script-src 'self'/.test(csp)) fail('csp_missing_script_src')
 if (!/connect-src 'self'/.test(csp)) fail('csp_missing_connect_src')
 if (/connect-src [^;]*\*/.test(csp)) fail('csp_connect_wildcard')
 
+// Static vercel.json headers must enforce framing/script lock-down without
+// overriding the build-resolved connect-src in index.html when VITE_API_BASE is set.
+if (existsSync('vercel.json')) {
+  const vercel = JSON.parse(readFileSync('vercel.json', 'utf8'))
+  const allHeaders = (vercel.headers ?? []).flatMap((rule) => rule.headers ?? [])
+  const vercelCsp = allHeaders.find((item) => item.key === 'Content-Security-Policy')?.value ?? ''
+  if (!vercelCsp) fail('missing_vercel_csp_header')
+  if (!/frame-ancestors 'none'/.test(vercelCsp)) fail('vercel_csp_missing_frame_ancestors')
+  if (!/script-src 'self'/.test(vercelCsp)) fail('vercel_csp_missing_script_src')
+  if (/\b(?:connect-src|default-src)\b/.test(vercelCsp)) fail('vercel_csp_blocks_api_base')
+}
+
 // A secret must never reach a published asset.
 const ASSETS = join(DIST, 'assets')
 if (existsSync(ASSETS)) {

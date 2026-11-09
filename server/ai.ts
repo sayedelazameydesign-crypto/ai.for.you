@@ -1,5 +1,5 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
-import type { AIRequest, ToolResult } from '../shared/types.ts'
+import type { AIRequest, ToolInput, ToolResult } from '../shared/types.ts'
 import { isToolId } from '../shared/tools.ts'
 import { ACCESS_HEADER, API_VERSION, API_VERSION_HEADER, type ErrorCode } from '../shared/contract.ts'
 import { isRecord } from './tools/types.ts'
@@ -23,6 +23,35 @@ export interface AIEnvironment {
   /** Declared source of the client address. Unset means a single shared bucket. */
   AI_TRUSTED_PROXY?: string
 }
+
+const SERVER_ENV_RECORD: Record<keyof AIEnvironment, true> = {
+  GROQ_API_KEY: true,
+  GROQ_MODEL: true,
+  AI_ACCESS_CODE: true,
+  AI_DAILY_LIMIT: true,
+  AI_PROVIDER: true,
+  AI_MAX_TOKENS: true,
+  AI_ALLOWED_ORIGINS: true,
+  AI_TIMEOUT_MS: true,
+  AI_TRUSTED_PROXY: true,
+}
+
+/** Exhaustive list of server-only environment keys, checked against AIEnvironment at compile time. */
+export const SERVER_ENV_KEYS = Object.keys(SERVER_ENV_RECORD) as readonly (keyof AIEnvironment)[]
+
+/** Merge server-only environment variables without dropping optional proxy settings. */
+export function resolveServerEnv(
+  loaded: Record<string, string | undefined>,
+  fallback: Record<string, string | undefined> = {},
+): AIEnvironment {
+  const resolved: AIEnvironment = {}
+  for (const key of SERVER_ENV_KEYS) {
+    const value = loaded[key] || fallback[key]
+    if (value !== undefined) resolved[key] = value
+  }
+  return resolved
+}
+
 export interface ServerConfig {
   env: AIEnvironment
   fetcher?: typeof fetch
@@ -127,17 +156,31 @@ export function resetRateLimits(): void {
   daily = { count: 0, day: '' }
 }
 
-function allowRequest(client: string, now: number, limit: number): boolean {
+function isDailyExhausted(now: number, limit: number): boolean {
+  const day = new Date(now).toISOString().slice(0, 10)
+  // Advance monotonically: a stale timestamp must never rewind a newer UTC day.
+  if (!daily.day || day > daily.day) daily = { count: 0, day }
+  return daily.count >= limit
+}
+
+/**
+ * Inbound abuse protection: throttles authenticated request bursts before body
+ * parsing, without charging the deployment-wide daily quota for invalid input.
+ */
+function allowClientBurst(client: string, now: number): boolean {
   for (const [key, bucket] of buckets) if (bucket.reset <= now) buckets.delete(key)
   const bucket = buckets.get(client) ?? { count: 0, reset: now + MINUTE }
   if (bucket.count >= PER_MINUTE) return false
-  const day = new Date(now).toISOString().slice(0, 10)
-  if (daily.day !== day) daily = { count: 0, day }
-  if (daily.count >= limit) return false
   if (buckets.size >= 1000 && !buckets.has(client)) return false
   bucket.count++
-  daily.count++
   buckets.set(client, bucket)
+  return true
+}
+
+/** Spend one daily slot only after the request is validated and ready for the provider. */
+function consumeDailyQuota(now: number, limit: number): boolean {
+  if (isDailyExhausted(now, limit)) return false
+  daily.count++
   return true
 }
 
@@ -149,9 +192,9 @@ export function promptFor(request: AIRequest): string {
   return SYSTEM_PROMPT + tool.prompt(request.input as never)
 }
 
-function validateResult(tool: AIRequest['tool'], value: unknown): value is ToolResult {
+function validateResult(tool: AIRequest['tool'], value: unknown, input: ToolInput): value is ToolResult {
   const module = serverTools.get(tool)
-  return isRecord(value) && Boolean(module?.validateResult(value))
+  return isRecord(value) && Boolean(module?.validateResult(value, input))
 }
 
 /** Wait before one bounded retry, honoring Retry-After when it is short enough to be useful. */
@@ -247,7 +290,9 @@ async function routeRequest(request: Request, config: ServerConfig, client: stri
   if (!secureEqual(access, env.AI_ACCESS_CODE!)) return failure(401, 'access', 'رمز الوصول غير صحيح. راجعه في الإعدادات.', cors)
   const now = config.now?.() ?? Date.now()
   const limit = boundedInt(env.AI_DAILY_LIMIT, 40, 1, 1000)
-  if (!allowRequest(client, now, limit)) return failure(429, 'rate-limit', 'وصل الخادم إلى حد الطلبات حالياً. انتظر دقيقة أو حاول غداً، أو استخدم الوضع المحلي.', { ...cors, 'Retry-After': '60' })
+  if (isDailyExhausted(now, limit) || !allowClientBurst(client, now)) {
+    return failure(429, 'rate-limit', 'وصل الخادم إلى حد الطلبات حالياً. انتظر دقيقة أو حاول غداً، أو استخدم الوضع المحلي.', { ...cors, 'Retry-After': '60' })
+  }
   let body: unknown
   try { body = JSON.parse(await readBounded(request)) }
   catch (error) { return failure(error instanceof Error && error.message === 'body-too-large' ? 413 : 400, 'body', 'الطلب غير صالح أو يتجاوز الحجم المسموح.', cors) }
@@ -255,6 +300,12 @@ async function routeRequest(request: Request, config: ServerConfig, client: stri
   if (!validateRequest(body)) return failure(400, 'input', 'راجع الحقول والحدود: النص حتى 12,000 حرف للوضع السحابي، ويجب الموافقة على إرساله.', cors)
   const model = env.GROQ_MODEL?.trim() || provider.defaultModel
   if (!/^[\w./-]{1,120}$/.test(model)) return failure(503, 'model', 'إعداد اسم النموذج غير صالح.', cors)
+  // Re-read the clock after awaiting the body so a stream crossing UTC midnight
+  // is charged to the current day instead of rewinding the daily counter.
+  const quotaNow = config.now?.() ?? Date.now()
+  if (!consumeDailyQuota(quotaNow, limit)) {
+    return failure(429, 'rate-limit', 'وصل الخادم إلى حد الطلبات حالياً. انتظر دقيقة أو حاول غداً، أو استخدم الوضع المحلي.', { ...cors, 'Retry-After': '60' })
+  }
 
   const timeout = upstreamTimeout(env)
   const maxTokens = boundedInt(env.AI_MAX_TOKENS, 4096, 1024, 8192)
@@ -293,7 +344,7 @@ async function routeRequest(request: Request, config: ServerConfig, client: stri
     let result: unknown
     try { result = JSON.parse(content.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')) }
     catch { return failure(502, 'output', 'تعذّرت قراءة نتيجة المزوّد. جرّب صياغة أقصر.', cors) }
-    if (!validateResult(body.tool, result)) return failure(502, 'output', 'النتيجة لا تطابق البنية المتوقعة. لم يتم عرض محتوى غير متحقق منه.', cors)
+    if (!validateResult(body.tool, result, body.input)) return failure(502, 'output', 'النتيجة لا تطابق البنية المتوقعة. لم يتم عرض محتوى غير متحقق منه.', cors)
     const tool = serverTools.get(body.tool)!
     const finalized = await tool.finalize(result as never, body.input as never)
     return json({ result: finalized }, 200, cors)
