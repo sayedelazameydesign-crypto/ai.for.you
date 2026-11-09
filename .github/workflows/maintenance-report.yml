@@ -28,6 +28,10 @@ concurrency:
   group: weekly-maintenance-report
   cancel-in-progress: false
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   report:
     runs-on: ubuntu-latest

@@ -38,6 +38,10 @@ concurrency:
   group: maintenance-agent
   cancel-in-progress: false
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   propose:
     runs-on: ubuntu-latest
@@ -124,7 +128,7 @@ jobs:
           BODY+="- Only \`package.json\`, \`package-lock.json\` and \`CHANGELOG.md\` may change."$'\n'
           BODY+="- Patch and minor updates only. A major (React, Vite, TypeScript, ESLint) is deliberately excluded."$'\n'
           BODY+="- \`npm run check\` passed before the proposal was created."$'\n'
-          BODY+="- Guards: \`node scripts/agent-guards.mjs\` passed (22 checks)."$'\n\n'
+          BODY+="- Guards: \`node scripts/agent-guards.mjs\` passed (26 checks)."$'\n\n'
           BODY+="**Reviewer:** confirm the suite is green on this branch, then merge or close. Closing is a valid outcome."
           EXISTING="$(gh pr list --head "$BRANCH" --json number --jq '.[0].number // empty')"
           if [ -n "$EXISTING" ]; then
