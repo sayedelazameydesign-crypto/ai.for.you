@@ -1,7 +1,5 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
-import { createServer } from 'node:http'
-import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { extname, join, normalize, resolve } from 'node:path'
 import { test, expect } from '@playwright/test'
@@ -140,6 +138,7 @@ test('content security policy blocks nothing the app needs', async ({ page }) =>
 test('production build with VITE_API_BASE allows the declared origin and blocks undeclared origins under Vercel + meta CSP', async ({ page }) => {
   test.setTimeout(90000)
 
+  const appOrigin = 'https://app.celia.example'
   const declaredOrigin = 'https://api.declared.example'
   const forbiddenOrigin = 'https://api.forbidden.example'
   const outDir = mkdtempSync(join(tmpdir(), 'celia-dist-csp-'))
@@ -147,7 +146,11 @@ test('production build with VITE_API_BASE allows the declared origin and blocks 
   const vercelConfig = JSON.parse(readFileSync('vercel.json', 'utf8')) as {
     headers?: Array<{ source?: string; headers?: Array<{ key: string; value: string }> }>
   }
-  const edgeHeaders = (vercelConfig.headers ?? []).flatMap((rule) => rule.headers ?? [])
+  const globalRule = (vercelConfig.headers ?? []).find((rule) => rule.source === '/(.*)')
+  const edgeHeaders: Record<string, string> = {}
+  for (const header of globalRule?.headers ?? []) {
+    edgeHeaders[header.key.toLowerCase()] = header.value
+  }
 
   const mimeTypes: Record<string, string> = {
     '.html': 'text/html; charset=utf-8',
@@ -161,20 +164,6 @@ test('production build with VITE_API_BASE allows the declared origin and blocks 
     '.woff2': 'font/woff2',
   }
 
-  const server = createServer((req, res) => {
-    for (const header of edgeHeaders) res.setHeader(header.key, header.value)
-    const reqPath = new URL(req.url ?? '/', 'http://127.0.0.1').pathname
-    const relPath = reqPath === '/' ? 'index.html' : reqPath.replace(/^\/+/, '')
-    const candidate = normalize(resolve(outDir, relPath))
-    if (!candidate.startsWith(outDir) || !existsSync(candidate) || statSync(candidate).isDirectory()) {
-      res.writeHead(404).end('not found')
-      return
-    }
-    const contentType = mimeTypes[extname(candidate)] ?? 'application/octet-stream'
-    res.writeHead(200, { 'Content-Type': contentType })
-    res.end(readFileSync(candidate))
-  })
-
   try {
     execFileSync('npx', ['vite', 'build', '--outDir', outDir], {
       cwd: process.cwd(),
@@ -185,13 +174,26 @@ test('production build with VITE_API_BASE allows the declared origin and blocks 
     const builtHtml = readFileSync(join(outDir, 'index.html'), 'utf8')
     expect(builtHtml).toContain(`connect-src &#39;self&#39; ${declaredOrigin}`)
 
-    await new Promise<void>((resolveListen) => server.listen(0, '127.0.0.1', resolveListen))
-    const { port } = server.address() as AddressInfo
-
     let declaredHits = 0
     let forbiddenHits = 0
 
-    await page.route(`${declaredOrigin}/**`, async (route) => {
+    await page.route(/^https:\/\/app\.celia\.example(?:\/|$)/, async (route) => {
+      const reqPath = new URL(route.request().url()).pathname
+      const relPath = reqPath === '/' ? 'index.html' : reqPath.replace(/^\/+/, '')
+      const candidate = normalize(resolve(outDir, relPath))
+      if (!candidate.startsWith(outDir) || !existsSync(candidate) || statSync(candidate).isDirectory()) {
+        await route.fulfill({ status: 404, headers: edgeHeaders, body: 'not found' })
+        return
+      }
+      const contentType = mimeTypes[extname(candidate)] ?? 'application/octet-stream'
+      await route.fulfill({
+        status: 200,
+        headers: { ...edgeHeaders, 'content-type': contentType },
+        body: readFileSync(candidate),
+      })
+    })
+
+    await page.route(/^https:\/\/api\.declared\.example\//, async (route) => {
       declaredHits++
       await route.fulfill({
         status: 200,
@@ -200,7 +202,7 @@ test('production build with VITE_API_BASE allows the declared origin and blocks 
         body: JSON.stringify({ configured: true, provider: 'Groq' }),
       })
     })
-    await page.route(`${forbiddenOrigin}/**`, async (route) => {
+    await page.route(/^https:\/\/api\.forbidden\.example\//, async (route) => {
       forbiddenHits++
       await route.fulfill({
         status: 200,
@@ -218,7 +220,7 @@ test('production build with VITE_API_BASE allows the declared origin and blocks 
       })
     })
 
-    await page.goto(`http://127.0.0.1:${port}/`)
+    await page.goto(`${appOrigin}/`)
     await expect(page.getByRole('heading', { level: 1 })).toContainText('أدوات صغيرة')
 
     // Startup status check in WorkspaceContext must reach the declared VITE_API_BASE.
@@ -254,7 +256,6 @@ test('production build with VITE_API_BASE allows the declared origin and blocks 
       return events.some((e) => e.directive === 'connect-src' && e.blockedURI.startsWith(forbiddenOrigin))
     }).toBe(true)
   } finally {
-    await new Promise<void>((resolveClose) => server.close(() => resolveClose()))
     rmSync(outDir, { recursive: true, force: true })
   }
 })
