@@ -328,19 +328,21 @@ try {
       ledger.rows.length === 1 && ledger.rows[0].requests === 6 && ledger.rows[0].chars === '2400',
       JSON.stringify(ledger.rows[0]))
   } finally {
-    for (const client of burstClients) client.release()
+    for (const client of burstClients) {
+      await client.query('rollback').catch(() => {})
+      client.release()
+    }
   }
 
   /* 7. Concurrency: monthly limit race + cross-account non-contention ------ */
 
-  // Seed 18 requests earlier in the current UTC month (10 minutes ago so 60s burst window is clear).
-  for (let i = 0; i < 18; i++) {
-    const minutesAgo = 10 + Math.floor(i / 5) * 2
-    await pool.query(
-      `select * from private.consume_ai_quota($1, 'summary', 100, clock_timestamp() - ($2 || ' minutes')::interval)`,
-      [USER_MONTH_RACE, String(minutesAgo)],
-    )
-  }
+  // Seed 18 prior requests on the current UTC day (updated 10 minutes ago so the
+  // 60-second sliding burst window is empty while monthly usage stands at 18/20).
+  await pool.query(
+    `insert into public.ai_usage (user_id, usage_day, tool, requests, chars_used, updated_at)
+     values ($1, (clock_timestamp() at time zone 'utc')::date, 'summary', 18, 1800, clock_timestamp() - interval '10 minutes')`,
+    [USER_MONTH_RACE],
+  )
   const monthResults = await Promise.all(
     Array.from({ length: 8 }, () => runAsRole(pool, 'authenticated', USER_MONTH_RACE, `select * from public.consume_own_quota('summary', 250)`)),
   )
@@ -360,10 +362,12 @@ try {
 
   console.log(`sql_live=passed checks=${cases.length}`)
 } catch (error) {
+  const message = error instanceof Error ? error.message : String(error)
   for (const c of cases) {
     if (!c.pass) console.error(`FAIL  ${c.name}${c.detail ? ` (${c.detail})` : ''}`)
   }
-  console.error(`sql_live=failed error=${error instanceof Error ? error.message : String(error)}`)
+  console.error(`::error title=SQL Live::${message}`)
+  console.error(`sql_live=failed error=${message}`)
   process.exit(1)
 } finally {
   await pool.end().catch(() => {})
