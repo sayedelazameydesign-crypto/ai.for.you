@@ -65,28 +65,62 @@ jobs:
         env:
           APPLY: 'true'
         run: |
-          node scripts/maintenance-agent.mjs --apply
-          BRANCH="$(git rev-parse --abbrev-ref HEAD)"
-          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
-          if [ "$BRANCH" = "main" ]; then
-            echo "::error::agent_tried_to_commit_on_main"; exit 1
+          BASE_SHA="$(git rev-parse HEAD)"
+          MAIN_SHA="$(git rev-parse --verify --quiet refs/heads/main || true)"
+          OUT_FILE="$(mktemp)"
+          trap 'rm -f "$OUT_FILE"' EXIT
+          node scripts/maintenance-agent.mjs --apply | tee "$OUT_FILE"
+          AFTER_MAIN_SHA="$(git rev-parse --verify --quiet refs/heads/main || true)"
+          if [ -n "$MAIN_SHA" ] && [ "$AFTER_MAIN_SHA" != "$MAIN_SHA" ]; then
+            echo "::error::agent_committed_on_main"
+            exit 1
           fi
+          BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+          HEAD_SHA="$(git rev-parse HEAD)"
+          if grep -q '^agent=noop ' "$OUT_FILE"; then
+            if [ "$HEAD_SHA" != "$BASE_SHA" ]; then
+              echo "::error::noop_mutated_head"
+              exit 1
+            fi
+            echo "decision=noop" >> "$GITHUB_OUTPUT"
+            echo "branch=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if grep -q '^agent=proposed ' "$OUT_FILE"; then
+            case "$BRANCH" in
+              maintenance/*) ;;
+              *) echo "::error::invalid_proposal_branch=$BRANCH"; exit 1 ;;
+            esac
+            if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "master" ]; then
+              echo "::error::agent_tried_to_commit_on_main"
+              exit 1
+            fi
+            if [ "$HEAD_SHA" = "$BASE_SHA" ]; then
+              echo "::error::proposed_without_commit"
+              exit 1
+            fi
+            echo "decision=proposed" >> "$GITHUB_OUTPUT"
+            echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "::error::unexpected_agent_outcome"
+          exit 1
 
       - name: Open the pull request
         id: pr
-        if: steps.propose.outputs.branch && steps.propose.outputs.branch != 'main'
+        if: steps.propose.outputs.decision == 'proposed' && steps.propose.outputs.branch != '' && steps.propose.outputs.branch != 'main' && steps.propose.outputs.branch != 'master'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BRANCH: ${{ steps.propose.outputs.branch }}
         run: |
-          git push --force-with-lease origin "$BRANCH"
+          node scripts/maintenance-agent.mjs --push "$BRANCH"
           TITLE="Proposal: routine dependency updates"
           # The PR body states its own limits so a reviewer never assumes more.
           BODY="**Opened by the maintenance agent. It cannot merge this.**"$'\n\n'
           BODY+="- Only \`package.json\`, \`package-lock.json\` and \`CHANGELOG.md\` may change."$'\n'
           BODY+="- Patch and minor updates only. A major (React, Vite, TypeScript, ESLint) is deliberately excluded."$'\n'
           BODY+="- \`npm run check\` passed before the proposal was created."$'\n'
-          BODY+="- Guards: \`node scripts/agent-guards.mjs\` passed (20 checks)."$'\n\n'
+          BODY+="- Guards: \`node scripts/agent-guards.mjs\` passed (22 checks)."$'\n\n'
           BODY+="**Reviewer:** confirm the suite is green on this branch, then merge or close. Closing is a valid outcome."
           EXISTING="$(gh pr list --head "$BRANCH" --json number --jq '.[0].number // empty')"
           if [ -n "$EXISTING" ]; then

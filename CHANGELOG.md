@@ -16,6 +16,7 @@
 - `docs/RUNBOOK.md` و`docs/SELF-MAINTAINING.md`.
 
 ### أُصلح
+- إصلاح تعارض الفرع المحمي في وكيل الصيانة (`scripts/maintenance-agent.mjs` و`.github/workflows/maintenance-agent.yml` — `G12`): الخروج النظيف بحالة `agent=noop` ورمز `0` على `main` عند غياب التحديثات الروتينية دون إنشاء فرع أو التزام أو PR، وعزل التحديثات الروتينية على فرع `maintenance/...` مشتق من نقطة الأساس النظيفة مع التراجع التلقائي عند أي فشل ومنع `commit` و`push` المباشر على `main`/`master` عبر جدار حماية هيكلي وعقد إيجار `--force-with-lease` صريح (`10` اختبارات عزل في `tests/maintenance-agent.test.ts` و`22` فحصاً في `scripts/agent-guards.mjs`).
 - توحيد حالة الدوران الفعلي مع تفضيل تقليل الحركة (`prefers-reduced-motion: reduce`) في `#/space` وفي كود `Three.js` المُصدَّر: تعطيل زر الدوران التلقائي بتسمية وصول صريحة عند تفعيل تقليل الحركة، وتمرير الحالة الفعلية إلى مولّد الكود، وتضمين فحص `matchMedia('(prefers-reduced-motion: reduce)')` داخل الكود المُصدَّر نفسه لمنع تشغيل حلقة `requestAnimationFrame` على أجهزة الزوّار المفعِّلين لتقليل الحركة حتى لو طُلب الدوران في إعداد التصدير.
 - تمرير جميع متغيرات `AIEnvironment` التسعة إلى خادم التطوير والمعاينة في `vite.config.ts` عبر `resolveServerEnv()` المحروسة وقت الترجمة.
 - إزالة التعارض بين ترويسة CSP الثابتة في `vercel.json` وسياسة `<meta>` المبنية وقت البناء عند ضبط `VITE_API_BASE` على خادم منفصل، مع إبقاء `frame-ancestors 'none'` و`script-src 'self'` على الحافة.
