@@ -25,6 +25,12 @@ export default defineConfig(({ mode, command }) => {
     }],
     server: { host: '0.0.0.0', allowedHosts: ['.e2b.app', 'localhost', '127.0.0.1'] },
     preview: { host: '0.0.0.0', allowedHosts: ['.e2b.app', 'localhost', '127.0.0.1'] },
-    build: { target: 'es2022', sourcemap: false },
+    build: {
+      target: 'es2022',
+      sourcemap: false,
+      // Keep font subsets as same-origin files so strict `font-src 'self'` is
+      // never violated by Vite base64-inlining <4 KB unicode-range subsets into CSS.
+      assetsInlineLimit: (filePath) => /\.(?:woff2?|ttf|otf)$/i.test(filePath) ? false : undefined,
+    },
   }
 })

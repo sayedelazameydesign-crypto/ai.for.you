@@ -62,13 +62,15 @@ if (existsSync('vercel.json')) {
   if (/\b(?:connect-src|default-src)\b/.test(vercelCsp)) fail('vercel_csp_blocks_api_base')
 }
 
-// A secret must never reach a published asset.
+// A secret must never reach a published asset, and CSS must not inline `data:font/`
+// subsets that violate `font-src 'self'` in production.
 const ASSETS = join(DIST, 'assets')
 if (existsSync(ASSETS)) {
   for (const name of readdirSync(ASSETS)) {
     if (!/\.(js|css)$/.test(name)) continue
     const text = readFileSync(join(ASSETS, name), 'utf8')
     if (/\bgsk_[A-Za-z0-9]{20,}/.test(text)) fail('provider_key_in_bundle')
+    if (name.endsWith('.css') && /url\(\s*['"]?data:font\//i.test(text)) fail('inlined_data_font_breaks_csp')
   }
 }
 
