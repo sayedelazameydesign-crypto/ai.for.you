@@ -18,15 +18,15 @@
 
 | المعرّف | نوع القياس | القيمة |
 | --- | --- | --- |
-| `unit-tests` | `tests:unit` | 104 |
-| `browser-tests` | `tests:browser` | 13 |
+| `unit-tests` | `tests:unit` | 108 |
+| `browser-tests` | `tests:browser` | 14 |
 | `scripts-passing` | `checks:scripts-passing` | 4 |
 | `cloud-input-limit` | `limits:cloud-input` | 12000 |
 | `local-text-limit` | `limits:local-text` | 20000 |
 | `saved-items-limit` | `limits:saved-items` | 50 |
 | `rate-minute-limit` | `limits:rate-minute` | 6 |
 | `timeout-ceiling` | `limits:timeout-ms` | 25000 |
-| `coverage-statements` | `coverage:statements` | 70 |
+| `coverage-statements` | `coverage:statements` | 74 |
 
 ## ما لا يقيسه هذا الملف — وهو الأهم
 

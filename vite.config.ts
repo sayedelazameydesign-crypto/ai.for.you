@@ -28,9 +28,19 @@ export default defineConfig(({ mode, command }) => {
     build: {
       target: 'es2022',
       sourcemap: false,
+      // `three` is isolated into an on-demand lazy chunk (~580 kB raw / ~145 kB gzip)
+      // and gated by compressed-byte budgets in scripts/check-build.mjs.
+      chunkSizeWarningLimit: 620,
       // Keep font subsets as same-origin files so strict `font-src 'self'` is
       // never violated by Vite base64-inlining <4 KB unicode-range subsets into CSS.
       assetsInlineLimit: (filePath) => /\.(?:woff2?|ttf|otf)$/i.test(filePath) ? false : undefined,
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes('node_modules/three')) return 'three'
+          },
+        },
+      },
     },
   }
 })

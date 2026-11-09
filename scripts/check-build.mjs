@@ -30,8 +30,11 @@ if (bytes > PAGES_LIMIT) fail('exceeds_pages_size_limit')
 
 const html = readFileSync(join(DIST, 'index.html'), 'utf8')
 if (!html.includes('<div id="root"></div>')) fail('missing_root')
-if (/__(TITLE|DESCRIPTION|THEME_COLOR)__/.test(html)) fail('unreplaced_placeholder')
+if (/__TITLE__|__DESCRIPTION__|__THEME_COLOR__/.test(html)) fail('unreplaced_placeholder')
 if (!/<script[^>]+type="module"/.test(html)) fail('missing_bundle')
+// Optional Three.js 3D space (#/space) must stay strictly lazy-loaded:
+// index.html must never eagerly <script>-load or modulepreload three/Space chunks.
+if (/assets\/(?:three|Space)-[^"']+\.js/.test(html)) fail('eager_lazy3d_chunk_in_html')
 
 // A5: the published artifact must carry the policy. GitHub Pages cannot send
 // headers, so the meta tag is the only enforcement there and it must exist.
@@ -76,13 +79,20 @@ if (existsSync(ASSETS)) {
 
 // Ship-less-JS budget, measured on the compressed bytes a visitor actually
 // downloads. The Pages limit above is 1 GB and would never catch a bloated bundle.
-// Budgets are deliberately a little above current output so normal growth passes
-// but a heavy new dependency fails the build and has to be justified.
-const BUDGETS = { js: 200 * 1024, css: 40 * 1024 }
-const compressed = { js: 0, css: 0 }
+// Core 2D workspace JS stays gated at 200 KB; the optional lazy-loaded 3D chunks
+// (`three-*.js` + `Space-*.js`, proven absent from index.html above) carry their
+// own explicit 180 KB cap so neither initial load nor the 3D view can bloat silently.
+const BUDGETS = { js: 200 * 1024, lazy3d: 180 * 1024, css: 40 * 1024 }
+const compressed = { js: 0, lazy3d: 0, css: 0 }
 if (existsSync(ASSETS)) {
   for (const name of readdirSync(ASSETS)) {
-    const kind = name.endsWith('.js') ? 'js' : name.endsWith('.css') ? 'css' : null
+    const kind = name.endsWith('.css')
+      ? 'css'
+      : /^(?:three|Space)-.+\.js$/.test(name)
+        ? 'lazy3d'
+        : name.endsWith('.js')
+          ? 'js'
+          : null
     if (!kind) continue
     compressed[kind] += gzipSync(readFileSync(join(ASSETS, name))).length
   }
@@ -94,4 +104,4 @@ for (const [kind, limit] of Object.entries(BUDGETS)) {
 }
 
 console.log(`build_check=passed files=${files} size_mb=${(bytes / 1048576).toFixed(2)} pages_limit_mb=1024`)
-console.log(`bundle_gzip js_kb=${(compressed.js / 1024).toFixed(1)}/${BUDGETS.js / 1024} css_kb=${(compressed.css / 1024).toFixed(1)}/${BUDGETS.css / 1024}`)
+console.log(`bundle_gzip js_kb=${(compressed.js / 1024).toFixed(1)}/${BUDGETS.js / 1024} lazy3d_kb=${(compressed.lazy3d / 1024).toFixed(1)}/${BUDGETS.lazy3d / 1024} css_kb=${(compressed.css / 1024).toFixed(1)}/${BUDGETS.css / 1024}`)
