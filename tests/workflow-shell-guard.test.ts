@@ -379,10 +379,13 @@ describe('P1 — Workflow shell guard structural & override verification (script
         '        run: |',
         '          echo "hello"',
         '        shell: sh',
-        '      - name: Disables pipefail inside script',
+        '      - name: Disables pipefail inside script even after quoted/commented << tokens',
         '        run: |',
+        '          echo "<<EOF" # <<COMMENT_EOF',
+        '          cat <<<EOF',
         '          set +o pipefail',
         '          node scripts/smoke-deploy.mjs | tee out.txt',
+        '      - { run: "node scripts/smoke-deploy.mjs | tee out.txt", shell: sh }',
       ].join('\n'),
     )
     expect(stepOverrides.status).toBe(1)
@@ -391,8 +394,32 @@ describe('P1 — Workflow shell guard structural & override verification (script
         'unprotected_bash_step_shell',
         'unsafe_step_shell_override',
         'script_disables_shell_safety',
+        'posix_sh_forbidden_on_pipeline',
       ]),
     )
+
+    // Also verify quoted `<<EOF` does not hide a downstream pipeline under a documented `shell: sh` step.
+    const quotedHeredocPipeBypass = auditSingleWorkflowFixture(
+      [
+        'name: Quoted heredoc decoy before pipe',
+        'on: push',
+        'defaults:',
+        '  run:',
+        '    shell: bash',
+        'jobs:',
+        '  verify:',
+        '    runs-on: ubuntu-latest',
+        '    steps:',
+        '      # shell-guard-allow: Attempting to hide a pipe behind a quoted <<EOF string',
+        '      - name: Decoy heredoc string',
+        '        shell: sh',
+        '        run: |',
+        '          echo "<<EOF"',
+        '          node scripts/smoke-deploy.mjs | tee out.txt',
+      ].join('\n'),
+    )
+    expect(quotedHeredocPipeBypass.status).toBe(1)
+    expect(quotedHeredocPipeBypass.report.violations.map((v) => v.rule)).toContain('posix_sh_forbidden_on_pipeline')
   })
 
   it('4. accepts legitimate documented exceptions while rejecting empty justifications and blocking sh on pipelines', () => {

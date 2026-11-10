@@ -185,7 +185,7 @@ function parseScalarOrFlow(valuePart, lineNo, errors) {
 }
 
 function matchMappingEntry(trimmedLine) {
-  if (!trimmedLine) return null
+  if (!trimmedLine || trimmedLine.startsWith('{') || trimmedLine.startsWith('[')) return null
   if (trimmedLine.startsWith("'") || trimmedLine.startsWith('"')) {
     const quote = trimmedLine[0]
     let i = 1
@@ -413,8 +413,12 @@ function parseSequence(lines, startIdx, seqIndent, errors) {
       continue
     }
 
-    const { valuePart } = splitValueAndComment(afterDash, peek.idx + 1, errors)
-    arr.push(parseScalarOrFlow(valuePart, peek.idx + 1, errors))
+    const { valuePart, inlineAllow } = splitValueAndComment(afterDash, peek.idx + 1, errors)
+    const flowOrScalar = parseScalarOrFlow(valuePart, peek.idx + 1, errors)
+    if (flowOrScalar && typeof flowOrScalar === 'object' && !Array.isArray(flowOrScalar) && flowOrScalar[META]) {
+      flowOrScalar[META].allow = inlineAllow ?? flowOrScalar[META].allow ?? itemAllow
+    }
+    arr.push(flowOrScalar)
     idx = peek.idx + 1
   }
 
@@ -549,22 +553,67 @@ export function resolveRunnerInvocation(effectiveShell, scriptPath) {
   }
 }
 
+function findUnquotedHeredoc(line) {
+  let inSingle = false
+  let inDouble = false
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]
+    if (inSingle) {
+      if (ch === "'") inSingle = false
+      continue
+    }
+    if (inDouble) {
+      if (ch === '\\') {
+        i++
+        continue
+      }
+      if (ch === '"') inDouble = false
+      continue
+    }
+    if (ch === "'") {
+      inSingle = true
+      continue
+    }
+    if (ch === '"') {
+      inDouble = true
+      continue
+    }
+    if (ch === '#' && (i === 0 || /\s/.test(line[i - 1]))) {
+      break
+    }
+    if (ch === '<' && line[i + 1] === '<' && line[i - 1] !== '<' && line[i + 2] !== '<') {
+      const stripTabs = line[i + 2] === '-'
+      const afterOp = line.slice(i + (stripTabs ? 3 : 2))
+      const delimMatch = /^\s*(?:'([^']+)'|"([^"]+)"|\\?([A-Za-z_][A-Za-z0-9_]*))/.exec(afterOp)
+      if (delimMatch) {
+        return {
+          delimiter: delimMatch[1] ?? delimMatch[2] ?? delimMatch[3],
+          stripTabs,
+        }
+      }
+    }
+  }
+  return null
+}
+
 function stripHeredocs(script) {
   const lines = String(script ?? '').split('\n')
   const kept = []
-  let activeDelimiter = null
+  let activeHeredoc = null
 
   for (const line of lines) {
-    if (activeDelimiter !== null) {
-      if (line.trim() === activeDelimiter) {
-        activeDelimiter = null
+    if (activeHeredoc !== null) {
+      const candidate = activeHeredoc.stripTabs ? line.replace(/^\t+/, '') : line
+      if (candidate === activeHeredoc.delimiter) {
+        activeHeredoc = null
       }
       continue
     }
     kept.push(line)
-    const heredocMatch = /<<-?\s*(?:'([^']+)'|"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))/.exec(line)
-    if (heredocMatch) {
-      activeDelimiter = heredocMatch[1] ?? heredocMatch[2] ?? heredocMatch[3]
+    const heredoc = findUnquotedHeredoc(line)
+    if (heredoc) {
+      activeHeredoc = heredoc
     }
   }
   return kept.join('\n')
@@ -774,6 +823,15 @@ export function auditWorkflowYaml(source, fileName = 'workflow.yml') {
       }
 
       if (!('run' in step)) {
+        if (!('uses' in step)) {
+          violations.push({
+            file: fileName,
+            line: stepLine,
+            rule: 'step_missing_run_or_uses',
+            detail: `Job "${jobId}" (${stepLabel}) defines neither uses nor run`,
+          })
+          continue
+        }
         if ('shell' in step) {
           violations.push({
             file: fileName,
@@ -1313,8 +1371,11 @@ console.log(JSON.stringify(buckets))
         '        run: node scripts/smoke-deploy.mjs | tee out.txt',
         '      - name: In-script pipefail disable',
         '        run: |',
+        '          echo "<<FAKE_EOF" # <<COMMENT_EOF',
+        '          cat <<<HERE_STRING',
         '          set +o pipefail',
         '          node scripts/smoke-deploy.mjs | tee out.txt',
+        '      - { run: "node scripts/smoke-deploy.mjs | tee out.txt", shell: sh }',
       ].join('\n'),
       'step-override.yml',
     )
@@ -1325,8 +1386,9 @@ console.log(JSON.stringify(buckets))
         jobOverrideAudit.violations.some((v) => v.rule === 'posix_sh_forbidden_on_pipeline') &&
         !stepOverrideAudit.ok &&
         stepOverrideAudit.violations.some((v) => v.rule === 'unprotected_bash_step_shell') &&
-        stepOverrideAudit.violations.some((v) => v.rule === 'script_disables_shell_safety'),
-      'blocked job sh override, bash -e {0}, and set +o pipefail',
+        stepOverrideAudit.violations.some((v) => v.rule === 'script_disables_shell_safety') &&
+        stepOverrideAudit.violations.some((v) => v.rule === 'posix_sh_forbidden_on_pipeline'),
+      'blocked job/flow sh overrides, bash -e {0}, and set +o pipefail',
     )
 
     const documentedSafeException = auditWorkflowYaml(
