@@ -711,14 +711,6 @@ export function analyzeShellScript(script) {
   return { hasPipeline, disablesSafety, ambiguous: errors.length > 0, errors }
 }
 
-export function detectShellPipeline(script) {
-  return analyzeShellScript(script).hasPipeline
-}
-
-export function detectDisabledShellSafety(script) {
-  return analyzeShellScript(script).disablesSafety
-}
-
 function getNodeMeta(node) {
   return (node && typeof node === 'object' && node[META]) || { line: 1, allow: null, keyMeta: {} }
 }
