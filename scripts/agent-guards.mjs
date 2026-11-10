@@ -524,6 +524,10 @@ export function classifyShell(shellValue) {
 /** null means rejected by the allowlist, NOT a runnable fallback. */
 export function resolveRunnerInvocation(effectiveShell, scriptPath) {
   const { command, args } = parseRunnerShell(effectiveShell)
+  // Runner formats a process argument STRING, not a Node argv array. Its
+  // unquoted Bash {0} assumes a whitespace-free generated Linux temp path.
+  // Refuse paths whose process-string tokenization this helper cannot model.
+  if (typeof scriptPath !== 'string' || !/^[A-Za-z0-9_./{}-]+$/.test(scriptPath)) return null
   return command ? { command, args: args.map((arg) => arg.replace('{0}', scriptPath)) } : null
 }
 
@@ -597,7 +601,10 @@ export function analyzeShellScript(script) {
             // Unquoted heredocs expand command substitutions, but their text,
             // quotes and pipe characters are data, not shell commands.
             while (i < next) {
-              if (text[i] === '\\' && /[$`\\\n]/.test(text[i + 1] ?? '')) { i += 2; continue }
+              if (text[i] === '\\' && text[i + 1] === '\n') {
+                fail('Line continuation in an expanding heredoc is unsupported')
+              }
+              if (text[i] === '\\' && /[$`\\]/.test(text[i + 1] ?? '')) { i += 2; continue }
               if (text.startsWith('$(', i) || text[i] === '`') substitution()
               else i++
             }

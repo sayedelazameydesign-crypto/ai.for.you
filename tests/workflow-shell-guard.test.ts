@@ -228,7 +228,7 @@ describe('PR #21 — fail-closed shell template and whole-script regression proo
   it('jointly checks official runner built-ins, absolute paths and every approved Bash template with real execution', async () => {
     const guard = await import(/* @vite-ignore */ GUARD_SCRIPT)
     const dir = mkdtempSync(join(tmpdir(), 'celia-shell-parity-'))
-    const scriptPath = join(dir, 'step with spaces.sh')
+    const scriptPath = join(dir, 'step.sh')
     try {
       writeFileSync(scriptPath, "printf 'executed\\n'\n(exit 17) | cat\nprintf 'masked\\n'\n")
       for (const shell of [
@@ -248,6 +248,8 @@ describe('PR #21 — fail-closed shell template and whole-script regression proo
         expect(run.stdout, shell).toBe('executed\n')
         expect(guard.auditWorkflowYaml(shellFixture('(exit 17) | cat', shell)).ok, shell).toBe(true)
       }
+      expect(guard.resolveRunnerInvocation('bash', '/tmp/step with spaces.sh')).toBeNull()
+      expect(guard.resolveRunnerInvocation('bash', '/tmp/step"quoted.sh')).toBeNull()
       expect(guard.resolveRunnerInvocation('bash', '{0}')).toEqual({
         command: 'bash', args: ['--noprofile', '--norc', '-e', '-o', 'pipefail', '{0}'],
       })
@@ -351,6 +353,7 @@ describe('PR #21 — fail-closed shell template and whole-script regression proo
       'cat <<$VAR\necho ok', 'cat <<$(echo EOF)\necho ok',
       'cat <<"$VAR"\necho ok', "cat <<'EOF'junk\necho ok",
       'cat <<EOF <<SECOND\nEOF\nmissing second',
+      'cat <<EOF\nx\\\nEOF\necho ok\nEOF',
       'echo $((1 + 2))', 'cat <(echo ok)', 'echo "${value:-ok}"',
       'set "$OPTIONS"', 'eval "set +e"', 'source options.sh', 'echo $"translated"',
       "echo $'\\x73et'", 'echo "$(case x in x) echo ok;; esac)"', 'echo `echo \\`nested\\``',
