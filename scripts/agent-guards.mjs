@@ -554,20 +554,29 @@ export function analyzeShellScript(script) {
     let parens = 0
     const pending = []
     const flushWord = () => {
-      if (wordStarted) {
-        if (stop && word === 'case') fail('case within command substitution is unsupported')
-        words.push(word)
-      }
+      if (wordStarted) words.push(word)
       word = ''
       wordStarted = false
     }
     const flushCommand = () => {
       flushWord()
-      // Quote removal joins se"t", 'set', and escaped option spellings.
-      // Conservative: inspect set even after control keywords or command/builtin.
-      for (let n = 0; n < words.length; n++) {
-        if (['eval', 'source', '.'].includes(words[n])) fail('Indirect shell evaluation is outside the supported subset')
-        if (words[n] !== 'set') continue
+      // Find the executable, not literal argument words (find ., echo source).
+      // Control keywords/assignments and Bash command/builtin/time prefixes
+      // can precede the executable without changing its safety implications.
+      let n = 0
+      const prefixes = ['if', 'then', 'else', 'elif', 'do', 'while', 'until', '!', '{']
+      while (n < words.length) {
+        if (prefixes.includes(words[n]) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[n])) { n++; continue }
+        if (['command', 'builtin', 'time'].includes(words[n])) {
+          n++
+          while (words[n]?.startsWith('-')) n++
+          continue
+        }
+        break
+      }
+      if (stop && words[n] === 'case') fail('case within command substitution is unsupported')
+      if (['eval', 'source', '.'].includes(words[n])) fail('Indirect shell evaluation is outside the supported subset')
+      if (words[n] === 'set') {
         if (words.slice(n + 1).some((arg) => /[$?`]/.test(arg))) fail('Dynamic set options cannot be proven safe')
         for (let j = n + 1; j < words.length; j++) {
           if (/^\+[a-zA-Z]*e[a-zA-Z]*$/.test(words[j]) ||
@@ -576,13 +585,14 @@ export function analyzeShellScript(script) {
       }
       words = []
     }
-    const substitution = () => {
-      flushWord()
+    const substitution = (appendWord = true) => {
       if (text.startsWith('$((', i)) fail('Arithmetic expansion is outside the supported lexical subset')
       if (text.startsWith('$(', i)) { i += 2; scan(')', depth + 1) }
       else { i++; scan('`', depth + 1) }
-      wordStarted = true
-      word += '?' // An expansion cannot join two static words unnoticed.
+      if (appendWord) {
+        wordStarted = true
+        word += '?' // Preserve the outer word, but mark expansion as dynamic.
+      }
     }
     const consumeHeredocs = () => {
       for (const doc of pending) {
@@ -605,7 +615,7 @@ export function analyzeShellScript(script) {
                 fail('Line continuation in an expanding heredoc is unsupported')
               }
               if (text[i] === '\\' && /[$`\\]/.test(text[i + 1] ?? '')) { i += 2; continue }
-              if (text.startsWith('$(', i) || text[i] === '`') substitution()
+              if (text.startsWith('$(', i) || text[i] === '`') substitution(false)
               else i++
             }
           }

@@ -328,6 +328,9 @@ describe('PR #21 — fail-closed shell template and whole-script regression proo
       'echo "$(echo "$(set +e; false | cat)")"',
       'echo `set +e; false | cat`',
       'cat <<EOF\n$(set +e; false | cat)\nEOF',
+      'cat <<EOF\n$(echo harmless)\nEOF\nset +o pipefail\nfalse | cat',
+      'if true; then command set +e; fi; false | cat',
+      'OPTIONS=unused builtin set +o pipefail; false | cat',
       "se\"t\" '+o' 'pipefail'; false | cat",
       'set \\\n+o pipefail; false | cat',
       "set -x +o pipefail; false | cat",
@@ -339,9 +342,12 @@ describe('PR #21 — fail-closed shell template and whole-script regression proo
       'echo "start\n<<HIDE\nend" # <<COMMENT\ncat <<<"a | b"',
       'echo "escaped \\`literal\\` and \\"quote\\""',
       "printf '%s\\n' 'set +e | cat'", 'echo escaped\\|pipe',
+      "find . -name '*.ts'", 'git add .', 'echo eval source .',
+      'echo set +e', 'echo set "$OPTIONS"', 'echo "$(echo case)"',
       "printf '%s' $'line\\n<<NOT_A_HEREDOC'", '# <<EOF\necho ok || echo failure',
     ]) {
       expect(guard.analyzeShellScript(script), script).toMatchObject({ hasPipeline: false, disablesSafety: false, ambiguous: false })
+      expect(guard.auditWorkflowYaml(shellFixture(script)).ok, script).toBe(true)
     }
   })
 
@@ -355,7 +361,8 @@ describe('PR #21 — fail-closed shell template and whole-script regression proo
       'cat <<EOF <<SECOND\nEOF\nmissing second',
       'cat <<EOF\nx\\\nEOF\necho ok\nEOF',
       'echo $((1 + 2))', 'cat <(echo ok)', 'echo "${value:-ok}"',
-      'set "$OPTIONS"', 'eval "set +e"', 'source options.sh', 'echo $"translated"',
+      'set "$OPTIONS"', 'eval "set +e"', 'source options.sh',
+      'if true; then . options.sh; fi', 'X=1 command eval "set +e"', 'echo $"translated"',
       "echo $'\\x73et'", 'echo "$(case x in x) echo ok;; esac)"', 'echo `echo \\`nested\\``',
     ]) {
       const report = guard.auditWorkflowYaml(shellFixture(script))
