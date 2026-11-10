@@ -13,7 +13,7 @@
 | فحص `success/failure` فقط | تقرير بثلاث حالات: `PASS` / `FAIL` / `NOT RUN` — لأن «لم يعمل» ليس «نجح» |
 | `npm outdated --json` يبتلع أخطاء الشبكة والمصادقة ويعدّها `PASS` | فصل `stdout` عن `stderr`، وتحويل أخطاء الشبكة والمصادقة والتلف وغياب `current` إلى `FAIL` برمز سبب صريح ورمز خروج `1` |
 | غياب `check:sql` واختبارات التقرير | ربط `scripts/check-sql.mjs` في التقرير + `9` اختبارات عزل فعلية في `tests/maintenance-report.test.ts` |
-| ادّعاء `done` كامل لوكيل الصيانة المجدول | فصل صريح: إصلاح منطق `NOOP` وتفريع `maintenance/...` وحاجز منع `commit`/`push` على `main` وحماية `defaults.run.shell: bash` (`-e -o pipefail`) عبر ملفات سير العمل الأربعة مُنفَّذ ومُثبَت في `26` فحص حماية و`10` اختبارات مستودعات Git معزولة (`tests/maintenance-agent.test.ts`) و`10` اختبارات هيكلية وسلوكية للأنابيب (`tests/workflow-shell-guard.test.ts`)، بينما يبقى إثبات التشغيل الحي لسير العمل على `main` وإغلاق التذكرة `#11` معلّقًا (`partial`) |
+| ادّعاء `done` كامل لوكيل الصيانة المجدول | فصل صريح: إصلاح منطق `NOOP` وتفريع `maintenance/...` وحاجز منع `commit`/`push` على `main` وحماية `defaults.run.shell: bash` (`-e -o pipefail`) عبر ملفات سير العمل الأربعة مُنفَّذ ومُثبَت في `30` فحص حماية و`10` اختبارات مستودعات Git معزولة (`tests/maintenance-agent.test.ts`) و`17` اختبارًا هيكليًا وسلوكيًا للأنابيب (`tests/workflow-shell-guard.test.ts`)، بينما يبقى إثبات التشغيل الحي لسير العمل على `main` وإغلاق التذكرة `#11` معلّقًا (`partial`) |
 
 ## 1. المراحل الثلاث
 
@@ -21,7 +21,7 @@
 | --- | --- | --- |
 | **M1** حماية `main` وإلزام الاختبارات | `blocked` | `.github/CODEOWNERS` + قالب PR جاهزان، لكن **تفعيل الحماية في إعدادات المستودع يحتاج صلاحية المالك** ولم يُثبت مفعّلًا |
 | **M2** تقرير صيانة آلي أسبوعي | `done` | `.github/workflows/maintenance-report.yml` + `scripts/maintenance-report.mjs` + `tests/maintenance-report.test.ts`؛ أُثبت تشغيله يدويًا (`42529354539`) وبالجدولة التلقائية على `main` (`42621538980`) |
-| **M3** وكيل يقترح إصلاحًا عبر PR بلا دمج أو نشر | `partial` | `scripts/maintenance-agent.mjs` + `scripts/agent-guards.mjs` (`26` فحصًا ناجحًا) + `tests/maintenance-agent.test.ts` (`10` اختبارات مستودعات Git معزولة) + `tests/workflow-shell-guard.test.ts` (`10` اختبارات هيكلية وسلوكية لحماية `pipefail`): يدعم `NOOP` النظيف على `main` عند غياب التحديثات وتفريع `maintenance/...` من نقطة الأساس مع منع `commit` و`push` على `main`؛ وبانتظار التشغيل الحي على `main` لإغلاق التذكرة `#11` |
+| **M3** وكيل يقترح إصلاحًا عبر PR بلا دمج أو نشر | `partial` | `scripts/maintenance-agent.mjs` + `scripts/agent-guards.mjs` (`30` فحصًا ناجحًا) + `tests/maintenance-agent.test.ts` (`10` اختبارات مستودعات Git معزولة) + `tests/workflow-shell-guard.test.ts` (`17` اختبارًا هيكليًا وسلوكيًا لحماية `pipefail`): يدعم `NOOP` النظيف على `main` عند غياب التحديثات وتفريع `maintenance/...` من نقطة الأساس مع منع `commit` و`push` على `main`؛ وبانتظار التشغيل الحي على `main` لإغلاق التذكرة `#11` |
 
 ## 2. دورة الصيانة
 
@@ -47,7 +47,7 @@ Observe → Diagnose → Fix (proposal) → Verify → Approve (human) → Merge
 | `maintenance-report.yml` أسبوعيًا | ثغرات اعتماديات، فشل سجل `npm` أو حزم متأخرة، انحراف وثائق، خرق سياسة SQL، تسرب سر شكلي، أو تعطل الموقع الحي | كل اثنين 04:17 UTC (مُثبت في التشغيل `42621538980`) | `done` |
 | Dependabot أسبوعيًا | تحديثات الحزم وإجراءات GitHub Actions | كل اثنين | `done` |
 | `server/metrics.ts` | استهلاك حصة، رفض متكرر، فشل مزوّد أو مهلة | لحظيًا في السجل | `done` |
-| `agent-guards` في CI (`26` فحصًا) + `tests/maintenance-agent.test.ts` (`10` اختبارات) + `tests/workflow-shell-guard.test.ts` (`10` اختبارات) | كسر حواجز المسارات أو الأسرار أو عزل `main` أو `NOOP` أو التراجع عند فشل التحديث/الاختبارات أو غياب/تجاوز `defaults.run.shell: bash` (`-e -o pipefail`) في ملفات GitHub Actions | مع كل `npm test` وكل PR | `done` |
+| `agent-guards` في CI (`30` فحصًا) + `tests/maintenance-agent.test.ts` (`10` اختبارات) + `tests/workflow-shell-guard.test.ts` (`17` اختبارًا) | كسر حواجز المسارات أو الأسرار أو عزل `main` أو `NOOP` أو التراجع عند فشل التحديث/الاختبارات أو غياب/تجاوز `defaults.run.shell: bash` (`-e -o pipefail`) في ملفات GitHub Actions | مع كل `npm test` وكل PR | `done` |
 | `tests/maintenance-report.test.ts` + خطوة `ci.yml` | عطب في `maintenance-report.mjs` أو إخفاء فشل `npm outdated` أو `check:sql` | مع كل `npm test` وكل PR | `done` |
 | CodeQL | ثغرة في نمط الكود | أسبوعيًا بعد التفعيل | `blocked` |
 
@@ -110,12 +110,12 @@ PAGE_URL=https://… API_BASE=https://… npm run report:maintenance
 | لا يعمل على `pull_request` | المشغّل `schedule` أو `workflow_dispatch` فقط | مراجعة `.github/workflows/maintenance-agent.yml` |
 | صلاحيات محدودة | `contents/pull-requests/issues` فقط | لا `actions` ولا `deployments` ولا `id-token` |
 | لا يسقط حزمة بصمت ولا يقبل فشل `npm outdated` | تصنيف شامل (`routine` / `major_skipped` / `range_satisfied`) ورفض غياب `node_modules` أو `current` أو `ENEEDAUTH` | `6` فحوص في `agent-guards.mjs` |
-| لا تُبتلع رموز خروج الأنابيب (`\| tee`) في GitHub Actions | تثبيت `defaults.run.shell: bash` (`--noprofile --norc -e -o pipefail`) في ملفات سير العمل الأربعة وفحص الصدفة الفعّالة ومنع تجاوزات `sh` أو `bash` غير المحمي أو `set +o pipefail` | `4` فحوص في `agent-guards.mjs` (المجموع الكلي `26` فحصًا) + `10` اختبارات في `tests/workflow-shell-guard.test.ts` |
+| لا تُبتلع رموز خروج الأنابيب (`\| tee`) في GitHub Actions | تثبيت `defaults.run.shell: bash` (`--noprofile --norc -e -o pipefail`) في ملفات سير العمل الأربعة وفحص الصدفة الفعّالة ومنع تجاوزات `sh` أو `bash` غير المحمي أو `set +o pipefail` | `8` فحوص في `agent-guards.mjs` (المجموع الكلي `30` فحصًا) + `17` اختبارًا في `tests/workflow-shell-guard.test.ts` |
 
 </div>
 
 ```bash
-npm run agent:guards    # 26 فحصًا: المسارات، الأسرار، عزل main وNOOP، شمول التصنيف، أعطال npm outdated، وحماية pipefail في سير العمل
+npm run agent:guards    # 30 فحصًا: المسارات، الأسرار، عزل main وNOOP، شمول التصنيف، أعطال npm outdated، وحماية pipefail في سير العمل
 npm run agent:dry       # يعرض التصنيف الفعلي للحزم المتأخرة دون كتابة أي ملف
 ```
 
@@ -173,7 +173,7 @@ npm run agent:dry       # يعرض التصنيف الفعلي للحزم الم
 - **مُثبت فعليًا الآن:**
   - `maintenance-report.yml` يعمل بالجدولة الأسبوعية التلقائية على `main` (`42621538980`).
   - `scripts/maintenance-report.mjs` يرفض صمت `npm outdated` في حالات أخطاء الشبكة و`ENEEDAUTH` وJSON التالف وغياب `current`، ويشغّل `check:sql` فعليًا، ويُعيد رمز خروج `1` عند أي `FAIL` (`9` اختبارات عزل في `tests/maintenance-report.test.ts`).
-  - الحواجز الـ `26` في `scripts/agent-guards.mjs`، و`10` اختبارات مستودعات Git حقيقية معزولة في `tests/maintenance-agent.test.ts`، و`10` اختبارات هيكلية وسلوكية في `tests/workflow-shell-guard.test.ts` تثبت تمرير رموز الخروج غير الصفرية عبر `| tee` وعدم إعلان نجاح كاذب في `ci.yml` (`verify` ← تشغيل `Report a failed deployment`) وفي `maintenance-agent.yml` (`propose`).
+  - الحواجز الـ `30` في `scripts/agent-guards.mjs`، و`10` اختبارات مستودعات Git حقيقية معزولة في `tests/maintenance-agent.test.ts`، و`17` اختبارًا هيكليًا وسلوكيًا في `tests/workflow-shell-guard.test.ts` تثبت تمرير رموز الخروج غير الصفرية عبر `| tee` وعدم إعلان نجاح كاذب في `ci.yml` (`verify` ← تشغيل `Report a failed deployment`) وفي `maintenance-agent.yml` (`propose`).
 - **غير مُثبت بعد (ولا يُدَّعى):**
   - التحقق التشغيلي الحي لسير عمل `maintenance-agent.yml` المحدَّث على `main` في GitHub Actions بعد الدمج (وهو شرط إغلاق التذكرة `#11`).
   - تفعيل حماية الفرع `main` وفحص `CodeQL` في إعدادات المستودع (`G1`–`G3`).
@@ -197,5 +197,16 @@ npm run agent:dry       # يعرض التصنيف الفعلي للحزم الم
 2. لا يُرفع أي بند إلى `done` قبل تشغيل الأمر فعليًا وتوثيق مخرجه أو رقم تشغيل GitHub Actions المثبت له.
 3. `npm run check:docs` يفشل إن اختفى قسم القياس أو حالة `NOT RUN` أو ظهر سطر `TODO` منفرد، و`npm run check:evidence -- --full` يفشل إن خالفت الأعداد في `docs/EVIDENCE.md` القياس الفعلي.
 4. الأوامر التشغيلية في `docs/RUNBOOK.md`، والتفاصيل التقنية في `docs/QUALITY.md`.
+
+
+### حدود حارس الصدفة في PR #21
+
+مرجع المطابقة: `actions/runner` عند `310a370bf3605f5b092f8af63b3126627de2a210`، الملفان `src/Runner.Worker/Handlers/ScriptHandler.cs` و`ScriptHandlerHelpers.cs` (فرع خطوات `IsActionStep`، وليس مسار JobExtension). القائمة أضيق عمدًا من كل ما يمكن أن ينفّذه العداء.
+
+- محلّل واحد لقائمة سماح ضيقة يغذّي التصنيف وتوليد معاملات التشغيل. الصدفة `bash` تستخدم قالب العداء الرسمي `--noprofile --norc -e -o pipefail {0}`. أما `/usr/bin/bash` و`/bin/bash` فلا يُقبلان دون قالب صريح، و`python3` دون `{0}` ليس قالبًا مدمجًا في العداء. لا يوجد تنفيذ بديل لقالب مرفوض (`resolveRunnerInvocation()` يعيد `null`).
+- القوالب المخصصة تقبل ملف `{0}` مرة واحدة في النهاية فقط، وخيارات الحماية المعروفة فقط قبل الملف؛ تُرفض `-c` و`--` والمعاملات الموضعية والخيارات غير المدعومة. اختبارات المطابقة تشغّل ملفات Bash فعلية بمسار يحتوي مسافات وتتحقق من رمز الفشل `17` ومن تنفيذ الملف.
+- التحليل المعجمي يحفظ الاقتباس المفرد والمزدوج و`$'…'` والـ escapes والتعليقات عبر الأسطر، ويحلّل `$(…)` وbackticks تكراريًا، ويحترم here-string وheredoc متعدد المحددات و`<<-`. النص الحرفي داخل heredoc ليس أوامر، لكن استبدالات الأوامر في heredoc غير المقتبس تُفحص.
+- `ambiguous_shell_syntax` إخفاق إلزامي، لا تعفيه تعليقات السماح: اقتباس/استبدال/heredoc غير مغلق، محدد heredoc ديناميكي أو غير مدعوم، توسع حسابي أو معاملي، process substitution، ANSI-C escape غير مدعوم، `case` داخل استبدال أو escapes داخل backticks القديمة، أو `eval`/`source`/خيارات `set` ديناميكية. يلزم تبسيط السكربت أو توسيع المحلّل باختبارات قبل قبوله، لا تجاوز الحارس.
+- هذا حارس معجمي محدود لسلامة إعداد الصدفة وليس إثباتًا لأمان برامج Bash اعتباطية أو البرامج الخارجية. استثناءات Python وPowerShell المعتمدة لا تُحلّل كلغة Bash؛ لا تسمح القائمة باستثناء لقالب Bash غير المحمي.
 
 </div>

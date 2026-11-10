@@ -18,7 +18,7 @@
 
 | المعرّف | نوع القياس | القيمة |
 | --- | --- | --- |
-| `unit-tests` | `tests:unit` | 141 |
+| `unit-tests` | `tests:unit` | 148 |
 | `browser-tests` | `tests:browser` | 16 |
 | `scripts-passing` | `checks:scripts-passing` | 4 |
 | `cloud-input-limit` | `limits:cloud-input` | 12000 |

@@ -200,8 +200,170 @@ function startLocalSiteServer(
   })
 }
 
+function shellFixture(script: string, shell = 'bash') {
+  return [
+    'name: Adversarial shell fixture', 'on: push',
+    'defaults: { run: { shell: bash } }',
+    'jobs:', '  check:', '    runs-on: ubuntu-latest', '    steps:',
+    '      # shell-guard-allow: Documented non-pipeline exception for regression testing',
+    `      - shell: ${JSON.stringify(shell)}`, '        run: |',
+    ...script.split('\n').map((line) => `          ${line}`),
+  ].join('\n')
+}
+
+describe('PR #21 — fail-closed shell template and whole-script regression proofs', () => {
+  it('rejects bash -c exit -e -o pipefail {0} through auditWorkflowYaml and never synthesizes an invocation', async () => {
+    const guard = await import(/* @vite-ignore */ GUARD_SCRIPT)
+    const shell = 'bash -c exit -e -o pipefail {0}'
+    expect(guard.classifyShell(shell).safePipefail).toBe(false)
+    expect(guard.resolveRunnerInvocation(shell, '/tmp/step.sh')).toBeNull()
+    const report = guard.auditWorkflowYaml(shellFixture('exit 17 | tee out.txt', shell))
+    expect(report.ok).toBe(false)
+    expect(report.violations.map((v: Violation) => v.rule)).toContain('unprotected_bash_step_shell')
+    expect(report.parsedJobs.check.steps[0].runnerCommand).toBeNull()
+    // Reproduce the actual bypass independently: -c exit ignores the file.
+    expect(spawnSync('bash', ['-c', 'exit', '-e', '-o', 'pipefail', '/no/such/script']).status).toBe(0)
+  })
+
+  it('jointly checks official runner built-ins, absolute paths and every approved Bash template with real execution', async () => {
+    const guard = await import(/* @vite-ignore */ GUARD_SCRIPT)
+    const dir = mkdtempSync(join(tmpdir(), 'celia-shell-parity-'))
+    const scriptPath = join(dir, 'step with spaces.sh')
+    try {
+      writeFileSync(scriptPath, "printf 'executed\\n'\n(exit 17) | cat\nprintf 'masked\\n'\n")
+      for (const shell of [
+        'bash', 'bash --noprofile --norc -e -o pipefail {0}',
+        'bash -eo pipefail {0}', 'bash -oe pipefail {0}', 'bash -euo pipefail {0}',
+        'bash -eu -o pipefail {0}', 'bash -ue -o pipefail {0}',
+        'bash -u -o errexit -o pipefail {0}',
+        '/usr/bin/bash --noprofile --norc -e -o pipefail {0}',
+        '/bin/bash -e -o pipefail {0}',
+      ]) {
+        const classified = guard.classifyShell(shell)
+        const runner = guard.resolveRunnerInvocation(shell, scriptPath)
+        expect(classified.safePipefail, shell).toBe(true)
+        expect(runner, shell).not.toBeNull()
+        const run = spawnSync(runner.command, runner.args, { encoding: 'utf8' })
+        expect(run.status, shell).toBe(17)
+        expect(run.stdout, shell).toBe('executed\n')
+        expect(guard.auditWorkflowYaml(shellFixture('(exit 17) | cat', shell)).ok, shell).toBe(true)
+      }
+      expect(guard.resolveRunnerInvocation('bash', '{0}')).toEqual({
+        command: 'bash', args: ['--noprofile', '--norc', '-e', '-o', 'pipefail', '{0}'],
+      })
+      for (const shell of [null, 'bash -e {0}', '/usr/bin/bash {0}']) {
+        expect(guard.classifyShell(shell).safePipefail).toBe(false)
+        const runner = guard.resolveRunnerInvocation(shell, scriptPath)
+        expect(spawnSync(runner.command, runner.args).status).toBe(0)
+      }
+      expect(guard.resolveRunnerInvocation(null, '{0}')).toEqual({ command: 'bash', args: ['-e', '{0}'] })
+      for (const [shell, command, args] of [
+        ['sh', 'sh', ['-e', '{0}']], ['sh -e {0}', 'sh', ['-e', '{0}']],
+        ['sh -eu {0}', 'sh', ['-eu', '{0}']],
+        ['python', 'python', ['{0}']], ['python {0}', 'python', ['{0}']],
+        ['python3 {0}', 'python3', ['{0}']], ['pwsh', 'pwsh', ['-command', ". '{0}'"]],
+      ] as const) {
+        expect(guard.classifyShell(shell)).toMatchObject({ safePipefail: false, allowException: true })
+        expect(guard.resolveRunnerInvocation(shell, '{0}')).toEqual({ command, args })
+      }
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  })
+
+  it('rejects unsupported options, misplaced placeholders, bare paths and unsafe exception templates consistently', async () => {
+    const guard = await import(/* @vite-ignore */ GUARD_SCRIPT)
+    for (const shell of [
+      '/usr/bin/bash', '/bin/bash', 'python3', '/usr/bin/python',
+      'bash -c exit -e -o pipefail {0}', '/usr/bin/bash -c exit -e -o pipefail {0}',
+      'bash -e -o pipefail -- {0}', 'bash -e -o pipefail other {0}',
+      'bash -e -o pipefail {0} extra', 'bash -e -o pipefail {0} {0}',
+      'bash -e -o pipefail{0}', 'bash -e -o pipefail -s {0}',
+      'bash -e -o pipefail +e {0}', 'bash -e --norc -o pipefail {0}', 'bash -e -o pipefail -O extglob {0}',
+      'bash\t-e -o pipefail {0}', ' bash', 'bash  -e -o pipefail {0}',
+      'sh -c exit {0}', 'sh -- {0}', 'python -c exit {0}', 'pwsh -command exit {0}',
+    ]) {
+      expect(guard.classifyShell(shell), shell).toMatchObject({ safePipefail: false, allowException: false })
+      expect(guard.resolveRunnerInvocation(shell, '{0}'), shell).toBeNull()
+      expect(guard.auditWorkflowYaml(shellFixture('echo ok', shell)).ok, shell).toBe(false)
+    }
+  })
+
+  it('multiline quoted <<HIDE cannot hide set +o pipefail or the later pipeline', async () => {
+    const guard = await import(/* @vite-ignore */ GUARD_SCRIPT)
+    for (const quote of ['"', "'", "$'"]) {
+      const close = quote === "$'" ? "'" : quote
+      const script = `printf '%s\\n' ${quote}start\n<<HIDE\nend${close}\nset +o pipefail\nnode scripts/smoke-deploy.mjs | tee out.txt`
+      expect(guard.analyzeShellScript(script)).toMatchObject({ hasPipeline: true, disablesSafety: true, ambiguous: false })
+      const report = guard.auditWorkflowYaml(shellFixture(script))
+      expect(report.ok).toBe(false)
+      expect(report.parsedJobs.check.steps[0]).toMatchObject({ hasPipeline: true, disablesSafety: true })
+      expect(report.violations.map((v: Violation) => v.rule)).toContain('script_disables_shell_safety')
+      const shReport = guard.auditWorkflowYaml(shellFixture(script, 'sh'))
+      expect(shReport.violations.map((v: Violation) => v.rule)).toContain('posix_sh_forbidden_on_pipeline')
+    }
+  })
+
+  it('real heredoc literal bodies are not executable Bash and closing delimiters never swallow later commands', async () => {
+    const guard = await import(/* @vite-ignore */ GUARD_SCRIPT)
+    for (const delimiter of ['EOF', "'EOF'", '"EOF"', '\\EOF', "-'EOF'"]) {
+      const tabs = delimiter.startsWith('-') ? '\t' : ''
+      const script = `cat <<${delimiter}\n${tabs}set +o pipefail\n${tabs}false | tee literal.txt\n${tabs}EOF\necho ok`
+      expect(guard.analyzeShellScript(script), delimiter).toMatchObject({ hasPipeline: false, disablesSafety: false, ambiguous: false })
+      expect(guard.auditWorkflowYaml(shellFixture(script)).ok, delimiter).toBe(true)
+      const after = guard.auditWorkflowYaml(shellFixture(`${script}\nset +e\nfalse | cat`))
+      expect(after.ok).toBe(false)
+      expect(after.parsedJobs.check.steps[0]).toMatchObject({ hasPipeline: true, disablesSafety: true })
+    }
+    const multiple = "cat <<'FIRST' <<'SECOND'\nset +e | cat\nFIRST\nset +e | cat\nSECOND\necho ok"
+    expect(guard.auditWorkflowYaml(shellFixture(multiple)).ok).toBe(true)
+    const literal = "cat <<'EOF'\n$(set +e; false | cat)\nEOF"
+    expect(guard.analyzeShellScript(literal)).toMatchObject({ hasPipeline: false, disablesSafety: false, ambiguous: false })
+  })
+
+  it('recursively audits substitutions, escapes, quoted command words, comments and here-strings', async () => {
+    const guard = await import(/* @vite-ignore */ GUARD_SCRIPT)
+    for (const script of [
+      'echo "$(set +o pipefail; false | cat)"',
+      'echo "$(echo "$(set +e; false | cat)")"',
+      'echo `set +e; false | cat`',
+      'cat <<EOF\n$(set +e; false | cat)\nEOF',
+      "se\"t\" '+o' 'pipefail'; false | cat",
+      'set \\\n+o pipefail; false | cat',
+      "set -x +o pipefail; false | cat",
+    ]) {
+      expect(guard.analyzeShellScript(script), script).toMatchObject({ hasPipeline: true, disablesSafety: true, ambiguous: false })
+      expect(guard.auditWorkflowYaml(shellFixture(script)).ok, script).toBe(false)
+    }
+    for (const script of [
+      'echo "start\n<<HIDE\nend" # <<COMMENT\ncat <<<"a | b"',
+      'echo "escaped \\`literal\\` and \\"quote\\""',
+      "printf '%s\\n' 'set +e | cat'", 'echo escaped\\|pipe',
+      "printf '%s' $'line\\n<<NOT_A_HEREDOC'", '# <<EOF\necho ok || echo failure',
+    ]) {
+      expect(guard.analyzeShellScript(script), script).toMatchObject({ hasPipeline: false, disablesSafety: false, ambiguous: false })
+    }
+  })
+
+  it('fails closed on unterminated quotes/substitutions/heredocs and dynamic or unsupported lexical constructs', async () => {
+    const guard = await import(/* @vite-ignore */ GUARD_SCRIPT)
+    for (const script of [
+      "echo 'open", 'echo "open', "echo $'open", 'echo trailing\\',
+      'echo "$(echo ok"', 'echo `echo ok', 'cat <<EOF\nnever closed',
+      'cat <<$VAR\necho ok', 'cat <<$(echo EOF)\necho ok',
+      'cat <<"$VAR"\necho ok', "cat <<'EOF'junk\necho ok",
+      'cat <<EOF <<SECOND\nEOF\nmissing second',
+      'echo $((1 + 2))', 'cat <(echo ok)', 'echo "${value:-ok}"',
+      'set "$OPTIONS"', 'eval "set +e"', 'source options.sh', 'echo $"translated"',
+      "echo $'\\x73et'", 'echo "$(case x in x) echo ok;; esac)"', 'echo `echo \\`nested\\``',
+    ]) {
+      const report = guard.auditWorkflowYaml(shellFixture(script))
+      expect(report.ok, script).toBe(false)
+      expect(report.violations.map((v: Violation) => v.rule), script).toContain('ambiguous_shell_syntax')
+    }
+  })
+})
+
 describe('P1 — Workflow shell guard structural & override verification (scripts/agent-guards.mjs)', () => {
-  it('1. accepts the live .github/workflows directory and passes all 26 checks in agent-guards.mjs', () => {
+  it('1. accepts the live .github/workflows directory and passes all 30 checks in agent-guards.mjs', () => {
     const live = runWorkflowDirAudit(LIVE_WORKFLOWS_DIR, { requireStandard: true })
     expect(live.status).toBe(0)
     expect(live.report.ok).toBe(true)
@@ -255,7 +417,7 @@ describe('P1 — Workflow shell guard structural & override verification (script
       encoding: 'utf8',
     })
     expect(fullHarness.status).toBe(0)
-    expect(fullHarness.stdout).toContain('agent_guards=passed checks=26')
+    expect(fullHarness.stdout).toContain('agent_guards=passed checks=30')
   })
 
   it('2. rejects workflows missing defaults.run.shell: bash (even with decoy comments/strings) or missing required workflow files', () => {

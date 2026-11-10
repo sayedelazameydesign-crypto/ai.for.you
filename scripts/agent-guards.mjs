@@ -454,208 +454,262 @@ export function parseWorkflowYaml(source) {
   return { doc: parsed.value, errors }
 }
 
-export function classifyShell(shellValue) {
-  if (typeof shellValue !== 'string' || shellValue.trim() === '') {
-    return { kind: 'missing', raw: shellValue ?? null, safePipefail: false, allowException: false }
+/**
+ * A deliberately narrow subset of actions/runner's COMMAND [ARGS] templates.
+ * The runner splits the executable at a literal space, looks up defaults by
+ * the exact built-in name (not basename), and requires a {0} format argument.
+ * Never synthesize an invocation for a rejected template.
+ */
+function parseRunnerShell(value) {
+  const raw = typeof value === 'string' ? value : null
+  const result = (kind, safePipefail, allowException, command = null, args = []) =>
+    ({ kind, raw, safePipefail, allowException, command, args })
+  if (value == null || value === '') return result('missing', false, false, 'bash', ['-e', '{0}'])
+  // Reject quoting, tabs/newlines, format-string tricks and noncanonical spacing
+  // rather than pretending our argv tokenizer is the runner's process parser.
+  if (typeof value !== 'string' || value !== value.trim() || /[^\x20-\x7e]/.test(value) || value.includes('  ')) {
+    return result('unsupported', false, false)
   }
-  const trimmed = shellValue.trim()
-  const tokens = trimmed.split(/\s+/)
-  const bin = tokens[0].replace(/^.*\/+/, '')
-
-  if (bin === 'bash') {
-    if (tokens.length === 1) {
-      return { kind: 'bash-default', raw: trimmed, safePipefail: true, allowException: false }
-    }
-    const hasPlaceholder = tokens.includes('{0}')
-    let hasErrexit = false
-    let hasPipefail = false
-    let disabledSafety = false
-
-    for (let i = 1; i < tokens.length; i++) {
-      const tok = tokens[i]
-      if (tok === '{0}') break
-      if (tok === '+e' || (tok === '+o' && (tokens[i + 1] === 'errexit' || tokens[i + 1] === 'pipefail'))) {
-        disabledSafety = true
-      } else if (tok === '-o') {
-        const opt = tokens[i + 1]
-        if (opt === 'errexit') hasErrexit = true
-        if (opt === 'pipefail') hasPipefail = true
-        i++
-      } else if (/^\+[a-zA-Z]+$/.test(tok) && tok.includes('e')) {
-        disabledSafety = true
-      } else if (/^-[a-zA-Z]+$/.test(tok)) {
-        const flags = tok.slice(1)
-        for (let f = 0; f < flags.length; f++) {
-          if (flags[f] === 'e') hasErrexit = true
-          if (flags[f] === 'o') {
-            const attached = flags.slice(f + 1)
-            const opt = attached || tokens[++i]
-            if (opt === 'errexit') hasErrexit = true
-            if (opt === 'pipefail') hasPipefail = true
-            break
-          }
-        }
+  const tokens = value.split(' ')
+  const command = tokens.shift()
+  if (command === 'bash' && !tokens.length) {
+    return result('bash-default', true, false, command, ['--noprofile', '--norc', '-e', '-o', 'pipefail', '{0}'])
+  }
+  if (['bash', '/usr/bin/bash', '/bin/bash'].includes(command)) {
+    const reject = () => result('bash-unprotected', false, false)
+    if (tokens.at(-1) !== '{0}' || tokens.filter((t) => t === '{0}').length !== 1) return reject()
+    let errexit = false
+    let pipefail = false
+    let sawShortOption = false
+    for (let i = 0; i < tokens.length - 1; i++) {
+      const flag = tokens[i]
+      if (flag === '--noprofile' || flag === '--norc') {
+        if (sawShortOption) return reject() // Bash long options must precede short ones.
+        continue
       }
+      sawShortOption = true
+      if (['-e', '-u', '-eu', '-ue'].includes(flag)) {
+        errexit ||= flag.includes('e')
+      } else if (['-o', '-eo', '-oe', '-euo'].includes(flag)) {
+        // Bash consumes the NEXT argument for -o even in a short-option group.
+        const option = tokens[++i]
+        if (!['pipefail', 'errexit', 'nounset'].includes(option)) return reject()
+        errexit ||= flag.includes('e') || option === 'errexit'
+        pipefail ||= option === 'pipefail'
+      } else return reject() // Includes -c, --, positional arguments, +e, etc.
     }
-
-    if (hasPlaceholder && hasErrexit && hasPipefail && !disabledSafety) {
-      return { kind: 'bash-custom-safe', raw: trimmed, safePipefail: true, allowException: false }
-    }
-    return { kind: 'bash-unprotected', raw: trimmed, safePipefail: false, allowException: false }
+    const safe = errexit && pipefail
+    return result(safe ? 'bash-custom-safe' : 'bash-unprotected', safe, false, command, tokens)
   }
-
-  if (bin === 'sh') {
-    const validFormat = tokens.length === 1 || tokens.includes('{0}')
-    return { kind: 'posix-sh', raw: trimmed, safePipefail: false, allowException: validFormat }
+  if (command === 'sh') {
+    const args = tokens.length ? tokens : ['-e', '{0}']
+    if (['-e {0}', '-eu {0}'].includes(args.join(' '))) return result('posix-sh', false, true, command, args)
   }
-
-  if (bin === 'python' || bin === 'python3') {
-    const validFormat = tokens.length === 1 || (tokens.length === 2 && tokens[1] === '{0}')
-    return { kind: 'python', raw: trimmed, safePipefail: false, allowException: validFormat }
+  if (command === 'python' || command === 'python3') {
+    // python3 is NOT a runner built-in; bare python3 has no argument format.
+    const args = command === 'python' && !tokens.length ? ['{0}'] : tokens
+    if (args.length === 1 && args[0] === '{0}') return result('python', false, true, command, args)
   }
-
-  if (bin === 'pwsh') {
-    const validFormat = tokens.length === 1 || tokens.includes('{0}')
-    return { kind: 'pwsh', raw: trimmed, safePipefail: false, allowException: validFormat }
+  if (command === 'pwsh' && !tokens.length) {
+    return result('pwsh', false, true, command, ['-command', ". '{0}'"])
   }
+  return result('unsupported', false, false)
+}
 
-  return { kind: 'unsupported', raw: trimmed, safePipefail: false, allowException: false }
+export function classifyShell(shellValue) {
+  const { kind, raw, safePipefail, allowException } = parseRunnerShell(shellValue)
+  return { kind, raw, safePipefail, allowException }
+}
+
+/** null means rejected by the allowlist, NOT a runnable fallback. */
+export function resolveRunnerInvocation(effectiveShell, scriptPath) {
+  const { command, args } = parseRunnerShell(effectiveShell)
+  return command ? { command, args: args.map((arg) => arg.replace('{0}', scriptPath)) } : null
 }
 
 /**
- * Matches GitHub Actions `actions/runner` (`ScriptHandler.cs` + `ScriptHandlerHelpers.cs`):
- *   - Unspecified shell on Linux (`null`): `bash -e {0}` (NO `-o pipefail`)
- *   - `shell: bash`: `bash --noprofile --norc -e -o pipefail {0}`
- *   - `shell: sh`: `sh -e {0}`
+ * Whole-script lexical analysis, not a Bash interpreter or a safety proof for
+ * arbitrary programs. Quotes/escapes, substitution contexts and pending heredocs
+ * survive newlines. Unsupported lexical constructs fail closed. Literal text is
+ * never reinterpreted as syntax; executable substitutions are scanned recursively.
  */
-export function resolveRunnerInvocation(effectiveShell, scriptPath) {
-  if (typeof effectiveShell !== 'string' || effectiveShell.trim() === '') {
-    return { command: 'bash', args: ['-e', scriptPath] }
-  }
-  const trimmed = effectiveShell.trim()
-  const tokens = trimmed.split(/\s+/)
-  if (tokens.length === 1) {
-    switch (tokens[0]) {
-      case 'bash':
-        return { command: 'bash', args: ['--noprofile', '--norc', '-e', '-o', 'pipefail', scriptPath] }
-      case 'sh':
-        return { command: 'sh', args: ['-e', scriptPath] }
-      case 'python':
-      case 'python3':
-        return { command: 'python3', args: [scriptPath] }
-      default:
-        return { command: tokens[0], args: [scriptPath] }
-    }
-  }
-  return {
-    command: tokens[0],
-    args: tokens.slice(1).map((tok) => (tok === '{0}' ? scriptPath : tok)),
-  }
-}
+export function analyzeShellScript(script) {
+  const text = String(script ?? '')
+  let i = 0
+  let hasPipeline = false
+  let disablesSafety = false
+  const errors = []
+  const fail = (reason) => { throw new Error(reason) }
 
-function findUnquotedHeredoc(line) {
-  let inSingle = false
-  let inDouble = false
-
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i]
-    if (inSingle) {
-      if (ch === "'") inSingle = false
-      continue
-    }
-    if (inDouble) {
-      if (ch === '\\') {
-        i++
-        continue
+  function scan(stop = null, depth = 0) {
+    if (depth > 64) fail('Shell nesting exceeds supported depth')
+    let quote = null
+    let word = ''
+    let wordStarted = false
+    let words = []
+    let parens = 0
+    const pending = []
+    const flushWord = () => {
+      if (wordStarted) {
+        if (stop && word === 'case') fail('case within command substitution is unsupported')
+        words.push(word)
       }
-      if (ch === '"') inDouble = false
-      continue
+      word = ''
+      wordStarted = false
     }
-    if (ch === "'") {
-      inSingle = true
-      continue
-    }
-    if (ch === '"') {
-      inDouble = true
-      continue
-    }
-    if (ch === '#' && (i === 0 || /\s/.test(line[i - 1]))) {
-      break
-    }
-    if (ch === '<' && line[i + 1] === '<' && line[i - 1] !== '<' && line[i + 2] !== '<') {
-      const stripTabs = line[i + 2] === '-'
-      const afterOp = line.slice(i + (stripTabs ? 3 : 2))
-      const delimMatch = /^\s*(?:'([^']+)'|"([^"]+)"|\\?([A-Za-z_][A-Za-z0-9_]*))/.exec(afterOp)
-      if (delimMatch) {
-        return {
-          delimiter: delimMatch[1] ?? delimMatch[2] ?? delimMatch[3],
-          stripTabs,
+    const flushCommand = () => {
+      flushWord()
+      // Quote removal joins se"t", 'set', and escaped option spellings.
+      // Conservative: inspect set even after control keywords or command/builtin.
+      for (let n = 0; n < words.length; n++) {
+        if (['eval', 'source', '.'].includes(words[n])) fail('Indirect shell evaluation is outside the supported subset')
+        if (words[n] !== 'set') continue
+        if (words.slice(n + 1).some((arg) => /[$?`]/.test(arg))) fail('Dynamic set options cannot be proven safe')
+        for (let j = n + 1; j < words.length; j++) {
+          if (/^\+[a-zA-Z]*e[a-zA-Z]*$/.test(words[j]) ||
+              (words[j] === '+o' && ['pipefail', 'errexit'].includes(words[j + 1]))) disablesSafety = true
         }
       }
+      words = []
     }
-  }
-  return null
-}
-
-function stripHeredocs(script) {
-  const lines = String(script ?? '').split('\n')
-  const kept = []
-  let activeHeredoc = null
-
-  for (const line of lines) {
-    if (activeHeredoc !== null) {
-      const candidate = activeHeredoc.stripTabs ? line.replace(/^\t+/, '') : line
-      if (candidate === activeHeredoc.delimiter) {
-        activeHeredoc = null
+    const substitution = () => {
+      flushWord()
+      if (text.startsWith('$((', i)) fail('Arithmetic expansion is outside the supported lexical subset')
+      if (text.startsWith('$(', i)) { i += 2; scan(')', depth + 1) }
+      else { i++; scan('`', depth + 1) }
+      wordStarted = true
+      word += '?' // An expansion cannot join two static words unnoticed.
+    }
+    const consumeHeredocs = () => {
+      for (const doc of pending) {
+        let closed = false
+        while (i < text.length) {
+          const end = text.indexOf('\n', i)
+          const next = end < 0 ? text.length : end
+          const line = text.slice(i, next)
+          if ((doc.stripTabs ? line.replace(/^\t+/, '') : line) === doc.delimiter) {
+            i = end < 0 ? next : next + 1
+            closed = true
+            break
+          }
+          if (doc.quoted) i = next
+          else {
+            // Unquoted heredocs expand command substitutions, but their text,
+            // quotes and pipe characters are data, not shell commands.
+            while (i < next) {
+              if (text[i] === '\\' && /[$`\\\n]/.test(text[i + 1] ?? '')) { i += 2; continue }
+              if (text.startsWith('$(', i) || text[i] === '`') substitution()
+              else i++
+            }
+          }
+          if (end >= 0 && i === next) i++
+        }
+        if (!closed) fail('Unterminated heredoc')
       }
-      continue
+      pending.length = 0
     }
-    kept.push(line)
-    const heredoc = findUnquotedHeredoc(line)
-    if (heredoc) {
-      activeHeredoc = heredoc
+    while (i < text.length) {
+      const ch = text[i]
+      if (quote === "'") {
+        if (ch === "'") quote = null
+        else word += ch
+        i++; continue
+      }
+      if (quote === "$'") {
+        if (ch === "'") { quote = null; i++; continue }
+        if (ch === '\\') {
+          const escaped = text[++i]
+          const escapes = { n: '\n', r: '\r', t: '\t', '\\': '\\', "'": "'", '"': '"' }
+          if (!(escaped in escapes)) fail('Unsupported ANSI-C escape')
+          word += escapes[escaped]; i++; continue
+        }
+        word += ch; i++; continue
+      }
+      if (ch === '\\') {
+        if (stop === '`') fail('Escapes in legacy backtick substitutions are unsupported')
+        const next = text[i + 1]
+        if (next === undefined) fail('Trailing escape')
+        if (next === '\n') { i += 2; continue }
+        if (quote === '"' && !/[$`"\\]/.test(next)) { word += ch; i++; continue }
+        wordStarted = true; word += next; i += 2; continue
+      }
+      if (quote === '"' && ch === '"') { quote = null; i++; continue }
+      if (text.startsWith('$(', i) || (ch === '`' && !(stop === '`' && quote === null))) {
+        substitution(); continue
+      }
+      if (text.startsWith('$"', i)) fail('Locale-translated quoting is unsupported')
+      if (text.startsWith('${', i)) fail('Parameter expansion is outside the supported lexical subset')
+      if (quote === '"') { word += ch; i++; continue }
+      if (ch === stop && (stop !== ')' || parens === 0)) {
+        if (pending.length) fail('Heredoc without body before substitution close')
+        flushCommand(); i++; return
+      }
+      if (text.startsWith("$'", i)) { quote = "$'"; wordStarted = true; i += 2; continue }
+      if (ch === "'" || ch === '"') { quote = ch; wordStarted = true; i++; continue }
+      if (ch === '#' && !wordStarted) {
+        while (i < text.length && text[i] !== '\n') i++
+        continue
+      }
+      if (text.startsWith('<<<', i)) { flushWord(); i += 3; continue }
+      if (text.startsWith('<<', i)) {
+        flushWord(); i += 2
+        const stripTabs = text[i] === '-'
+        if (stripTabs) i++
+        while (text[i] === ' ' || text[i] === '\t') i++
+        let delimiter = ''
+        let quoted = false
+        const q = text[i] === "'" || text[i] === '"' ? text[i++] : null
+        if (q) {
+          quoted = true
+          while (i < text.length && text[i] !== q && text[i] !== '\n') {
+            // Deliberately refuse expansion/escape tricks in delimiter words.
+            if (/[\\$`]/.test(text[i])) fail('Ambiguous heredoc delimiter')
+            delimiter += text[i++]
+          }
+          if (text[i++] !== q) fail('Unterminated heredoc delimiter quote')
+        } else {
+          if (text[i] === '\\') { quoted = true; i++ }
+          while (i < text.length && !/[\s;&|<>()[\]]/.test(text[i])) {
+            if (!/[A-Za-z0-9_]/.test(text[i])) fail('Dynamic or unsupported heredoc delimiter')
+            delimiter += text[i++]
+          }
+        }
+        if (!delimiter || (i < text.length && !/[\s;&|<>)]/.test(text[i]))) fail('Ambiguous heredoc delimiter')
+        pending.push({ delimiter, stripTabs, quoted }); continue
+      }
+      if (text.startsWith('<(', i) || text.startsWith('>(', i) || text.startsWith('((', i) || text.startsWith('${', i)) {
+        fail('Unsupported expansion or process/arithmetic substitution')
+      }
+      if (ch === '\n') { flushCommand(); i++; consumeHeredocs(); continue }
+      if (/\s/.test(ch)) { flushWord(); i++; continue }
+      if (ch === '|') {
+        if (text[i + 1] === '|') i++
+        else hasPipeline = true
+        flushCommand(); i++; continue
+      }
+      if (';&()<>'.includes(ch)) {
+        if (ch === '(') parens++
+        if (ch === ')' && parens > 0) parens--
+        flushCommand(); i++; continue
+      }
+      wordStarted = true; word += ch; i++
     }
+    if (quote) fail('Unterminated shell quote')
+    if (stop) fail('Unterminated command substitution')
+    if (pending.length) fail('Unterminated heredoc')
+    if (parens) fail('Unterminated subshell')
+    flushCommand()
   }
-  return kept.join('\n')
+  try { scan() } catch (error) { errors.push(error.message) }
+  return { hasPipeline, disablesSafety, ambiguous: errors.length > 0, errors }
 }
 
 export function detectShellPipeline(script) {
-  const shellBody = stripHeredocs(script)
-  for (const line of shellBody.split('\n')) {
-    let inSingle = false
-    let inDouble = false
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i]
-      if (inSingle) {
-        if (ch === "'") inSingle = false
-        continue
-      }
-      if (inDouble) {
-        if (ch === '\\') { i++; continue }
-        if (ch === '"') inDouble = false
-        continue
-      }
-      if (ch === "'") { inSingle = true; continue }
-      if (ch === '"') { inDouble = true; continue }
-      if (ch === '#' && (i === 0 || /\s/.test(line[i - 1]))) break
-      if (ch === '|' && line[i - 1] !== '|' && line[i + 1] !== '|') {
-        return true
-      }
-    }
-  }
-  return false
+  return analyzeShellScript(script).hasPipeline
 }
 
 export function detectDisabledShellSafety(script) {
-  const shellBody = stripHeredocs(script)
-  for (const rawLine of shellBody.split('\n')) {
-    const line = rawLine.replace(/(?:^|\s)#.*$/, '').trim()
-    if (!line) continue
-    if (/(?:^|[;&|]\s*)set\s+(?:\+[a-zA-Z]*e[a-zA-Z]*|\+o\s+(?:pipefail|errexit))(?:\s|$|;)/.test(line)) {
-      return true
-    }
-  }
-  return false
+  return analyzeShellScript(script).disablesSafety
 }
 
 function getNodeMeta(node) {
@@ -856,7 +910,16 @@ export function auditWorkflowYaml(source, fileName = 'workflow.yml') {
       const hasStepShell = 'shell' in step
       const effectiveShell = hasStepShell ? step.shell : hasJobShell ? jobShell : workflowShell
       const shellInfo = classifyShell(effectiveShell)
-      const hasPipeline = detectShellPipeline(runScript)
+      // Non-Bash exception languages are not parsed as Bash. sh uses this
+      // conservative shared lexical subset too; exceptions never waive ambiguity.
+      const scriptAnalysis = ['python', 'pwsh'].includes(shellInfo.kind)
+        ? { hasPipeline: false, disablesSafety: false, ambiguous: false, errors: [] }
+        : analyzeShellScript(runScript)
+      const { hasPipeline } = scriptAnalysis
+      if (scriptAnalysis.ambiguous) {
+        violations.push({ file: fileName, line: getKeyLine(step, 'run'), rule: 'ambiguous_shell_syntax',
+          detail: `Job "${jobId}" (${stepLabel}): ${scriptAnalysis.errors.join('; ')}` })
+      }
       if (hasPipeline) pipelineStepsChecked++
 
       const stepAllow =
@@ -864,7 +927,7 @@ export function auditWorkflowYaml(source, fileName = 'workflow.yml') {
         getNodeMeta(step).allow ??
         (!hasStepShell ? jobAllow : null)
 
-      if (detectDisabledShellSafety(runScript)) {
+      if (scriptAnalysis.disablesSafety) {
         violations.push({
           file: fileName,
           line: getKeyLine(step, 'run'),
@@ -930,8 +993,10 @@ export function auditWorkflowYaml(source, fileName = 'workflow.yml') {
         safePipefail: shellInfo.safePipefail,
         documentedException,
         hasPipeline,
-        runnerCommand: runner.command,
-        runnerArgsTemplate: runner.args,
+        disablesSafety: scriptAnalysis.disablesSafety,
+        ambiguousShellSyntax: scriptAnalysis.ambiguous,
+        runnerCommand: runner?.command ?? null,
+        runnerArgsTemplate: runner?.args ?? null,
       })
     }
 
@@ -1312,6 +1377,28 @@ console.log(JSON.stringify(buckets))
         ? `workflows=${liveAudit.workflowsChecked} run_steps=${liveAudit.stepsChecked} pipelines=${liveAudit.pipelineStepsChecked}`
         : liveAudit.violations.map((v) => `${v.file}:${v.line}:${v.rule}`).join(', '),
     )
+
+    const unsafeTemplate = 'bash -c exit -e -o pipefail {0}'
+    check('workflow guard: rejects -c and absolute-path runner mismatches',
+      !classifyShell(unsafeTemplate).safePipefail && resolveRunnerInvocation(unsafeTemplate, '{0}') === null &&
+      !classifyShell('/usr/bin/bash').safePipefail && resolveRunnerInvocation('/usr/bin/bash', '{0}') === null &&
+      classifyShell('/usr/bin/bash -e -o pipefail {0}').safePipefail &&
+      resolveRunnerInvocation('bash', '{0}').args.join(' ') === '--noprofile --norc -e -o pipefail {0}',
+      'one strict allowlist shared by classification and invocation')
+
+    const multiline = analyzeShellScript(`printf '%s\\n' "start
+<<HIDE
+end"
+set +o pipefail
+node scripts/smoke-deploy.mjs | tee out.txt`)
+    check('workflow guard: multiline quotes cannot hide disabling commands or pipes',
+      multiline.hasPipeline && multiline.disablesSafety && !multiline.ambiguous)
+    const heredoc = analyzeShellScript("cat <<'EOF'\nset +o pipefail\nfalse | cat\nEOF\necho ok")
+    check('workflow guard: literal heredoc bodies are not executable shell',
+      !heredoc.hasPipeline && !heredoc.disablesSafety && !heredoc.ambiguous)
+    check('workflow guard: ambiguous shell syntax fails closed',
+      ["echo 'open", 'echo "$(echo ok', 'cat <<EOF\nmissing', 'cat <<$VAR\necho ok']
+        .every((script) => analyzeShellScript(script).ambiguous))
 
     const missingDefaultAudit = auditWorkflowYaml(
       [
